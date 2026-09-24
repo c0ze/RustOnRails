@@ -9,6 +9,7 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub content_type: Option<String>,
+    pub headers: Vec<(String, String)>,
     pub query: Map<String, Json>,
     pub body: Map<String, Json>,
     pub params: Params,
@@ -27,12 +28,23 @@ impl Request {
             method: method.to_uppercase(),
             path: path.to_string(),
             content_type: None,
+            headers: Vec::new(),
             query: Map::new(),
             body: Map::new(),
             params: Params::default(),
             malformed_body: false,
             ctx,
         }
+    }
+
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// `request.headers["X-Api-Token"]`: the first value, any case.
+    pub fn header(&self, name: &str) -> Option<String> {
+        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
     }
 
     pub fn with_query(mut self, query: &str) -> Self {

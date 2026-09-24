@@ -39,6 +39,7 @@ fn start(workers: usize) -> server::Running {
             Response::json(200, json!(pid))
         }))
         .get("/big", Box::new(|_: &mut Request| Response::json(200, json!("x".repeat(4096)))))
+        .get("/token", Box::new(|req: &mut Request| Response::json(200, json!(req.header("x-api-token")))))
         .post("/echo", Box::new(|req: &mut Request| {
             Response::json(201, json!({"name": req.params.get("name"), "page": req.params.get("page")}))
         }));
@@ -279,5 +280,14 @@ fn test_form_bodies_become_params() {
     let running = start(1);
     let (status, echoed) = post_echo(running.address, "application/x-www-form-urlencoded", "name=Ann+Lee&page=3");
     assert_eq!((201, json!({"name": "Ann Lee", "page": "3"})), (status, echoed));
+    running.stop();
+}
+
+#[test]
+fn test_headers_reach_the_request_case_insensitively() {
+    let running = start(1);
+    let request = "GET /token HTTP/1.1\r\nHost: test\r\nX-Api-Token: abc\r\nConnection: close\r\n\r\n";
+    assert_eq!((200, json!("abc")), send(running.address, request));
+    assert_eq!((200, json!(null)), get(running.address, "/token"));
     running.stop();
 }

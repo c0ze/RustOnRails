@@ -46,6 +46,7 @@ struct Incoming {
     method: String,
     target: String,
     content_type: Option<String>,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -145,7 +146,7 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>) {
         let close = !head.keep_alive();
         let head_only = head.method == "HEAD";
         let content_type = head.header("Content-Type").map(str::to_string);
-        let incoming = Incoming { method: head.method, target: head.target, content_type, body };
+        let incoming = Incoming { method: head.method, target: head.target, content_type, headers: head.headers, body };
         let (reply, response) = channel();
         if jobs.send(Job::Serve(incoming, reply)).is_err() {
             return;
@@ -209,5 +210,8 @@ fn handle(router: &Router, client: Client, incoming: &Incoming) -> (Response, Op
 fn build_request(ctx: Ctx, incoming: &Incoming) -> Request {
     let target = incoming.target.as_str();
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    Request::new(ctx, &incoming.method, path).with_query(query).with_body(incoming.content_type.as_deref(), &incoming.body)
+    Request::new(ctx, &incoming.method, path)
+        .with_query(query)
+        .with_headers(incoming.headers.clone())
+        .with_body(incoming.content_type.as_deref(), &incoming.body)
 }
