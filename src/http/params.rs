@@ -44,9 +44,14 @@ impl Params {
             .collect()
     }
 
-    /// `params.expect(post: [:title, ...])`
+    /// `params.expect(post: [:title, ...])`: like `require` + `permit`,
+    /// except that a hash with nothing permitted is also missing.
     pub fn expect(&self, key: &'static str, keys: &[&str]) -> Result<Attributes> {
-        Ok(self.require(key)?.permit(keys))
+        let permitted = self.require(key)?.permit(keys);
+        if permitted.is_empty() {
+            return Err(Error::ParameterMissing { key });
+        }
+        Ok(permitted)
     }
 
     /// `wrap_parameters`: when `name` isn't a parameter yet, puts the body

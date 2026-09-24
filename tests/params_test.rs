@@ -61,3 +61,14 @@ fn test_responses() {
     assert_eq!(json!({"status": 404, "error": "Not Found"}), error_page(404).body_json());
     assert_eq!(json!({"status": 422, "error": "Unprocessable Content"}), error_page(422).body_json());
 }
+
+// Rails 8.1.4 `expect` raises when nothing in the hash is permitted.
+#[test]
+fn test_expect_needs_a_permitted_key() {
+    let junk = Params::new(map(json!({"post": {"junk": 1}})), Default::default());
+    assert!(matches!(junk.expect("post", &["title"]), Err(Error::ParameterMissing { key: "post" })));
+    let array = Params::new(map(json!({"post": {"title": ["x"]}})), Default::default());
+    assert!(matches!(array.expect("post", &["title"]), Err(Error::ParameterMissing { .. })));
+    let null = Params::new(map(json!({"post": {"title": null}})), Default::default());
+    assert_eq!(vec![("title".to_string(), Value::Nil)], null.expect("post", &["title"]).unwrap());
+}
