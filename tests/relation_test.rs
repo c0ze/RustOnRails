@@ -2,7 +2,22 @@ mod blog;
 mod support;
 
 use blog::{ApplicationRecordScopes, Post, PostScopes, User};
-use rustonrails::{Ctx, Error, Model, Value, now};
+use std::sync::LazyLock;
+
+use rustonrails::{Behavior, Ctx, Error, Model, Time, Value, model, now};
+
+// A model that declares only some of the table's columns, as after a
+// migration adds a column the code doesn't know about yet.
+model! {
+    pub struct Slim in "posts" { id: i64, title: String, created_at: Time }
+}
+
+impl Model for Slim {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Slim>> = LazyLock::new(Behavior::new);
+        &BEHAVIOR
+    }
+}
 
 fn user(ctx: &mut Ctx, email: &str) -> i64 {
     let rows = ctx
@@ -147,4 +162,14 @@ fn test_mismatched_parameters_are_errors_not_misread_bytes() {
     let mut ctx = support::ctx();
     assert!(ctx.query("SELECT $1::int8", &[Value::from("12345678")]).is_err());
     assert!(ctx.query("SELECT $1::text", &[Value::Int(5)]).is_err());
+}
+
+#[test]
+fn test_loading_ignores_columns_the_model_does_not_declare() {
+    let mut ctx = support::ctx();
+    let alice = user(&mut ctx, "alice@example.com");
+    let id = post(&mut ctx, alice, "Kept", 1, 0);
+    let slim = Slim::find(&mut ctx, id).unwrap();
+    assert_eq!(Some("Kept"), ctx[slim].title.as_deref());
+    assert_eq!(1, Slim::all().load(&mut ctx).unwrap().len());
 }

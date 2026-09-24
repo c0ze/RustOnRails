@@ -71,10 +71,13 @@ impl<M: Model> Relation<M> {
         self
     }
 
-    /// The SELECT this relation runs, with its parameters.
+    /// The SELECT this relation runs, with its parameters. It names the
+    /// model's columns rather than `*`, so a column the model doesn't know
+    /// (added by a later migration) doesn't break loading.
     pub fn to_sql(&self) -> (String, Vec<Value>) {
         let table = quote(M::TABLE);
-        let mut sql = format!("SELECT {table}.* FROM {table}");
+        let columns: Vec<String> = M::COLUMNS.iter().map(|c| format!("{table}.{}", quote(c))).collect();
+        let mut sql = format!("SELECT {} FROM {table}", columns.join(", "));
         let mut params = Vec::new();
         for (i, filter) in self.filters.iter().enumerate() {
             sql.push_str(if i == 0 { " WHERE " } else { " AND " });
