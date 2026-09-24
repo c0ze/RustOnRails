@@ -68,3 +68,20 @@ fn test_json_bodies_become_params() {
     let body = router().call(&mut req).body_json();
     assert_eq!(json!({"id": "3", "email": "x"}), body["params"]);
 }
+
+fn id_is_numeric(req: &Request) -> bool {
+    req.params.value("id").to_ruby_string().chars().all(|c| c.is_ascii_digit())
+}
+
+// Rails sets the route's path parameters before its constraint runs.
+#[test]
+fn test_constraints_see_the_routes_path_params() {
+    let router = Router::new()
+        .get("/things/:id", echo("numeric"))
+        .constraint(id_is_numeric)
+        .get("/things/:id", echo("other"));
+    let mut numeric = Request::new(support::ctx(), "GET", "/things/42");
+    assert_eq!(json!({"route": "numeric", "params": {"id": "42"}}), router.call(&mut numeric).body_json());
+    let mut other = Request::new(numeric.ctx, "GET", "/things/abc");
+    assert_eq!(json!({"route": "other", "params": {"id": "abc"}}), router.call(&mut other).body_json());
+}

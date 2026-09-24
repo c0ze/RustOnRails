@@ -53,16 +53,20 @@ impl Router {
                 continue;
             }
             let Some(captures) = route.pattern.captures(&req.path) else { continue };
-            if !route.constraints.iter().all(|constraint| constraint(req)) {
-                continue;
-            }
             let mut path = Map::new();
             for name in &route.names {
                 if let Some(m) = captures.name(name) {
                     path.insert(name.clone(), Json::String(m.as_str().to_string()));
                 }
             }
+            // As in Rails, the constraint sees this route's path params; a
+            // route it rejects leaves the params as they were.
+            let before = req.params.clone();
             req.params.merge_path(path);
+            if !route.constraints.iter().all(|constraint| constraint(req)) {
+                req.params = before;
+                continue;
+            }
             return (route.handler)(req);
         }
         error_page(404)
