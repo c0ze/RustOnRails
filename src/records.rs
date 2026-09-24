@@ -133,6 +133,11 @@ impl Ctx {
         self.changed(record).contains(&column)
     }
 
+    /// `assign_attributes(attributes)` on a record in this `Ctx`.
+    pub fn assign<M: Model>(&mut self, record: Handle<M>, attributes: &[(String, Value)]) -> Result<()> {
+        crate::model::assign_to(&mut self[record], attributes)
+    }
+
     /// The cached target of `name`, if it was loaded for this foreign key.
     pub(crate) fn cached<M: Model>(&self, owner: Handle<M>, name: &str, key: &Value) -> Option<u32> {
         self.slot(owner).associations.get(name).filter(|(k, _)| k == key).map(|(_, index)| *index)

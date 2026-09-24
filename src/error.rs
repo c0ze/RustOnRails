@@ -41,7 +41,7 @@ impl fmt::Display for Error {
             Error::Abort => write!(f, "callback chain aborted"),
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
-            Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}"),
+            Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}."),
             Error::InvalidEnum { attribute, value } => write!(f, "'{value}' is not a valid {attribute}"),
             Error::NotPersisted { model } => write!(f, "cannot update a new {model}"),
             Error::Db(e) => match e.as_db_error() {

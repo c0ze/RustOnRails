@@ -44,4 +44,18 @@ impl<M> Behavior<M> {
     pub(crate) fn enum_for(&self, attribute: &str) -> Option<&EnumDef> {
         self.enums.iter().find(|e| e.attribute == attribute)
     }
+
+    /// Assigning to an enum takes a label or the label's integer
+    /// (`status = 1` gives "published"); anything else stays as given, for
+    /// the inclusion check or the write-time error.
+    pub(crate) fn cast_assignment(&self, attribute: &str, value: Value) -> Value {
+        match (self.enum_for(attribute), &value) {
+            (Some(def), Value::Int(i)) => def
+                .mapping
+                .iter()
+                .find(|(_, n)| n == i)
+                .map_or_else(|| Value::Str(i.to_string()), |(label, _)| Value::from(*label)),
+            _ => value,
+        }
+    }
 }

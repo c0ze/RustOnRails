@@ -26,7 +26,7 @@ pub use cast::FromValue;
 pub use ctx::Ctx;
 pub use error::{Error, Result};
 pub use records::Handle;
-pub use model::{Model, Record};
+pub use model::{Attributes, Model, Record};
 pub use relation::Relation;
 pub use validation::Errors;
 pub use value::{Time, Value, now};
