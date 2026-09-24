@@ -27,7 +27,7 @@ pub use behavior::{Behavior, Check, Cond, Event, Hook};
 pub use cast::FromValue;
 pub use ctx::Ctx;
 pub use error::{Error, Result};
-pub use http::{Params, Response, error_page, parse_query, reason, status};
+pub use http::{Constraint, Handler, Params, Request, Response, Router, error_page, parse_query, reason, status};
 pub use json::{AsJson, errors_json, format_time, value_json};
 pub use records::Handle;
 pub use model::{Attributes, Model, Record};
