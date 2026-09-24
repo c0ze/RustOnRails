@@ -36,8 +36,8 @@ const EMAIL_REGEXP: &str = r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[
 
 impl User {
     // user.rb:2-3
-    pub const POSTS: HasMany<User, Post> = HasMany::new("posts", "user_id", Some("user"));
-    pub const COMMENTS: HasMany<User, Comment> = HasMany::new("comments", "user_id", Some("user"));
+    pub const POSTS: HasMany<User, Post> = HasMany::new("posts", "user_id", Some(&Post::USER));
+    pub const COMMENTS: HasMany<User, Comment> = HasMany::new("comments", "user_id", Some(&Comment::USER));
 }
 
 impl Model for User {
@@ -84,7 +84,7 @@ impl Post {
     // post.rb:2
     pub const USER: BelongsTo<Post, User> = BelongsTo::new("user", "user_id");
     // post.rb:3
-    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some("post"));
+    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some(&Comment::POST));
 
     // post.rb:5  enum :status gives published? and draft?
     pub fn is_published(&self) -> bool {

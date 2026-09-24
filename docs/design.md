@@ -95,7 +95,7 @@ Associations are constants on the owner model, so a generated controller reads l
 ```rust
 impl Post {
     pub const USER: BelongsTo<Post, User> = BelongsTo::new("user", "user_id");
-    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some("post"));
+    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some(&Comment::POST));
 }
 
 let posts = Post::all().visible().recent().includes(&Post::USER).limit(20).load(ctx)?;

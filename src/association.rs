@@ -75,17 +75,18 @@ impl<M: Model, T: Model> Preload<M> for BelongsTo<M, T> {
 }
 
 /// `has_many :comments`, declared as a constant on the owner model.
-/// `inverse` names the child's `belongs_to` back to the owner, which Rails
-/// works out on its own for conventional names.
-pub struct HasMany<M, T> {
+/// `inverse` is the child's `belongs_to` back to the owner, which Rails
+/// works out on its own for conventional names; its type ties it to this
+/// owner, so a wrong inverse doesn't compile.
+pub struct HasMany<M: 'static, T: 'static> {
     pub name: &'static str,
     pub foreign_key: &'static str,
-    pub inverse: Option<&'static str>,
+    pub inverse: Option<&'static BelongsTo<T, M>>,
     marker: PhantomData<fn() -> (M, T)>,
 }
 
 impl<M, T> HasMany<M, T> {
-    pub const fn new(name: &'static str, foreign_key: &'static str, inverse: Option<&'static str>) -> Self {
+    pub const fn new(name: &'static str, foreign_key: &'static str, inverse: Option<&'static BelongsTo<T, M>>) -> Self {
         Self { name, foreign_key, inverse, marker: PhantomData }
     }
 }
@@ -104,7 +105,7 @@ impl<M: Model, T: Model> HasMany<M, T> {
         let child = ctx.build(record);
         ctx[child].set(self.foreign_key, key.clone())?;
         if let Some(inverse) = self.inverse {
-            ctx.cache(child, inverse, key, owner.index());
+            ctx.cache(child, inverse.name, key, owner.index());
         }
         Ok(child)
     }
