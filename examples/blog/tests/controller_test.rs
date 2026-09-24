@@ -1,8 +1,8 @@
-mod blog;
+mod fixtures;
 mod support;
 
-use blog::fixtures::{self, Fixtures};
-use blog::Post;
+use fixtures::Fixtures;
+use blog::models::Post;
 use rustonrails::{AsJson, Controller, Error, Handle, Json, Model, Record, Request, Response, Result, Router, action, json, status};
 
 #[derive(Default)]

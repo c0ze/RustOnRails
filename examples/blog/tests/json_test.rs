@@ -1,8 +1,7 @@
-mod blog;
+mod fixtures;
 mod support;
 
-use blog::fixtures;
-use blog::{Post, PostScopes, User};
+use blog::models::{Post, PostScopes, User};
 use rustonrails::{AsJson, Model, Record, Time, errors_json, format_time, json};
 
 #[test]

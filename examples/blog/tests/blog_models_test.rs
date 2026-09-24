@@ -1,10 +1,10 @@
 //! ../Rutile/examples/blog/test/models/*_test.rb, test for test.
 
-mod blog;
+mod fixtures;
 mod support;
 
-use blog::fixtures::{self, Fixtures};
-use blog::{ApplicationRecordScopes, Comment, Post, PostScopes, User};
+use fixtures::Fixtures;
+use blog::models::{ApplicationRecordScopes, Comment, Post, PostScopes, User};
 use chrono::TimeDelta;
 use rustonrails::{Ctx, Model, Record, now};
 

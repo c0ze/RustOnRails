@@ -1,8 +1,8 @@
-mod blog;
+mod fixtures;
 mod support;
 
-use blog::fixtures::{self, Fixtures};
-use blog::{Comment, Post, PostScopes, User};
+use fixtures::Fixtures;
+use blog::models::{Comment, Post, PostScopes, User};
 use rustonrails::{Ctx, Model, Record, Value};
 
 fn setup() -> (Ctx, Fixtures) {

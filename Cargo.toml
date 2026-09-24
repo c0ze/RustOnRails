@@ -11,3 +11,6 @@ postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 tiny_http = "0.12"
+
+[workspace]
+members = ["examples/blog"]

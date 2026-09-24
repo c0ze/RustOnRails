@@ -1,10 +1,11 @@
+#![allow(dead_code)]
 //! ../Rutile/examples/blog/test/fixtures/*.yml, inserted like Rails
 //! fixtures: no validations or callbacks.
 
 use chrono::TimeDelta;
 use rustonrails::{Ctx, Model, Record, now};
 
-use super::{Comment, Post, User};
+use blog::models::{Comment, Post, User};
 
 pub struct Fixtures {
     pub alice: i64,

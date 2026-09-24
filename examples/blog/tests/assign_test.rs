@@ -1,8 +1,7 @@
-mod blog;
+mod fixtures;
 mod support;
 
-use blog::fixtures;
-use blog::Post;
+use blog::models::Post;
 use rustonrails::{Model, Value};
 
 fn attrs(pairs: &[(&str, Value)]) -> Vec<(String, Value)> {

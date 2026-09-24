@@ -1,7 +1,6 @@
-mod blog;
 mod support;
 
-use blog::{ApplicationRecordScopes, Post, PostScopes, User};
+use blog::models::{ApplicationRecordScopes, Post, PostScopes, User};
 use std::sync::LazyLock;
 
 use rustonrails::{Behavior, Ctx, Error, Model, Time, Value, model, now};
