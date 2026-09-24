@@ -53,6 +53,16 @@ pub trait Model: Record {
         ctx.save_bang(handle)?;
         Ok(handle)
     }
+
+    /// `Post.insert(attributes)`: one INSERT with no validations or
+    /// callbacks; timestamps are filled in as Rails does. Returns the id.
+    fn insert(ctx: &mut Ctx, mut record: Self) -> Result<i64> {
+        crate::write::fill_timestamps(&mut record, crate::now())?;
+        match crate::write::insert_row(ctx, &record)? {
+            Value::Int(id) => Ok(id),
+            other => Err(crate::Error::Cast { expected: "integer id", value: other }),
+        }
+    }
 }
 
 /// Declares a model struct: one `Option` field per column, since any Ruby

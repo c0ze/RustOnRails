@@ -38,3 +38,17 @@ pub(crate) fn update_row<M: Model>(ctx: &mut Ctx, id: i64, record: &M, columns: 
     ctx.execute(&sql, &params)?;
     Ok(())
 }
+
+pub(crate) fn delete_row<M: Model>(ctx: &mut Ctx, id: i64) -> Result<()> {
+    let sql = format!("DELETE FROM {} WHERE {} = $1", quote(M::TABLE), quote("id"));
+    ctx.execute(&sql, &[Value::Int(id)])?;
+    Ok(())
+}
+
+/// `update_counters`: one atomic `column = COALESCE(column, 0) + by`.
+pub(crate) fn increment_column<M: Model>(ctx: &mut Ctx, id: i64, column: &str, by: i64) -> Result<()> {
+    let name = quote(column);
+    let sql = format!("UPDATE {} SET {name} = COALESCE({name}, 0) + $1 WHERE {} = $2", quote(M::TABLE), quote("id"));
+    ctx.execute(&sql, &[Value::Int(by), Value::Int(id)])?;
+    Ok(())
+}

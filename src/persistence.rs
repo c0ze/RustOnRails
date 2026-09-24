@@ -105,6 +105,61 @@ impl Ctx {
         Ok(())
     }
 
+    /// `destroy`: runs the destroy callbacks and deletes the row. False
+    /// when a before_destroy callback aborts.
+    pub fn destroy<M: Model>(&mut self, record: Handle<M>) -> Result<bool> {
+        let outcome = self.transaction(|ctx| {
+            ctx.run_callbacks(record, Event::BeforeDestroy)?;
+            if let Ok(id) = ctx.saved_id(record) {
+                write::delete_row::<M>(ctx, id)?;
+            }
+            ctx.slot_mut(record).destroyed = true;
+            ctx.run_callbacks(record, Event::AfterDestroy)?;
+            Ok(true)
+        });
+        match outcome {
+            Ok(done) => Ok(done),
+            Err(error) => {
+                self.slot_mut(record).destroyed = false;
+                if matches!(error, Error::Abort) { Ok(false) } else { Err(error) }
+            }
+        }
+    }
+
+    /// `destroy!`
+    pub fn destroy_bang<M: Model>(&mut self, record: Handle<M>) -> Result<()> {
+        if self.destroy(record)? { Ok(()) } else { Err(Error::RecordNotDestroyed { model: M::NAME }) }
+    }
+
+    /// `reload`: reads the row again, dropping unsaved changes and errors.
+    pub fn reload<M: Model>(&mut self, record: Handle<M>) -> Result<()> {
+        let id = self.saved_id(record)?;
+        let found = M::all().where_eq("id", id).limit(1).fetch(self)?.into_iter().next();
+        let fresh = found.ok_or_else(|| Error::RecordNotFound { model: M::NAME, conditions: Some(format!("'id'={id}")) })?;
+        let slot = self.slot_mut(record);
+        slot.saved = Some(fresh.clone());
+        slot.record = fresh;
+        slot.errors.clear();
+        Ok(())
+    }
+
+    /// `increment!(column, by)`: bumps the value in memory and in the row
+    /// with one UPDATE; no validations, no callbacks, no `updated_at`.
+    pub fn increment_bang<M: Model>(&mut self, record: Handle<M>, column: &'static str, by: i64) -> Result<()> {
+        let id = self.saved_id(record)?;
+        let current = match self[record].get(column) {
+            Value::Int(i) => i,
+            _ => 0,
+        };
+        self[record].set(column, Value::Int(current + by))?;
+        write::increment_column::<M>(self, id, column, by)?;
+        let value = self[record].get(column);
+        if let Some(saved) = self.slot_mut(record).saved.as_mut() {
+            saved.set(column, value)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn saved_id<M: Model>(&self, record: Handle<M>) -> Result<i64> {
         self.slot(record).saved.as_ref().and_then(Record::id).ok_or(Error::NotPersisted { model: M::NAME })
     }
