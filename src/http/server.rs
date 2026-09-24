@@ -59,14 +59,16 @@ impl Running {
 fn work(server: &tiny_http::Server, router: &Router, url: &str) {
     let mut client: Option<Client> = None;
     while let Ok(mut incoming) = server.recv() {
-        let connection = match client.take() {
+        // A connection the database closed (restart, failover, idle kill)
+        // is replaced rather than reused.
+        let connection = match client.take().filter(|c| !c.is_closed()) {
             Some(client) => Ok(client),
             None => Client::connect(url, NoTls),
         };
         let response = match connection {
             Ok(connection) => {
                 let (response, kept) = handle(router, connection, &mut incoming);
-                client = kept;
+                client = kept.filter(|c| !c.is_closed());
                 response
             }
             Err(_) => error_page(500),
