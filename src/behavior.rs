@@ -149,13 +149,15 @@ impl<M> Behavior<M> {
         }
     }
 
-    /// Enum labels become their integers; an unknown label becomes nil, as
-    /// Rails' enum type serializes it.
+    /// Enum labels become their integers and numeric strings pass through as
+    /// integers; an unknown label becomes nil, as Rails' enum type
+    /// serializes it.
     pub(crate) fn to_database(&self, attribute: &str, value: Value) -> Value {
         match (self.enum_for(attribute), &value) {
-            (Some(def), Value::Str(label)) => {
-                def.mapping.iter().find(|(l, _)| l == label).map_or(Value::Nil, |(_, i)| Value::Int(*i))
-            }
+            (Some(def), Value::Str(label)) => match def.mapping.iter().find(|(l, _)| l == label) {
+                Some((_, i)) => Value::Int(*i),
+                None => label.trim().parse().map_or(Value::Nil, Value::Int),
+            },
             _ => value,
         }
     }

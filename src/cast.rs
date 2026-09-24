@@ -10,6 +10,12 @@ use crate::{Error, Result, Time, Value};
 /// as `to_i` would, and a blank string becomes nil.
 pub trait FromValue: Sized {
     fn from_value(value: Value) -> Result<Option<Self>>;
+
+    /// A query value cast by the column's type, as Active Model's
+    /// `serialize` does: anything that doesn't fit becomes nil.
+    fn serialize(value: Value) -> Option<Self> {
+        Self::from_value(value).ok().flatten()
+    }
 }
 
 static LEADING_INTEGER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[+-]?\d+").expect("regex"));
@@ -38,6 +44,14 @@ impl FromValue for i64 {
             other => Err(Error::Cast { expected: "integer", value: other }),
         }
     }
+
+    /// Unlike assignment, a query value with no leading digits is nil, not 0.
+    fn serialize(value: Value) -> Option<Self> {
+        match value {
+            Value::Str(s) if !LEADING_INTEGER.is_match(&s) => None,
+            other => Self::from_value(other).ok().flatten(),
+        }
+    }
 }
 
 impl FromValue for f64 {
@@ -49,6 +63,13 @@ impl FromValue for f64 {
             Value::Str(s) if s.trim().is_empty() => Ok(None),
             Value::Str(s) => Ok(Some(to_f(&s))),
             other => Err(Error::Cast { expected: "float", value: other }),
+        }
+    }
+
+    fn serialize(value: Value) -> Option<Self> {
+        match value {
+            Value::Str(s) if !LEADING_FLOAT.is_match(&s) => None,
+            other => Self::from_value(other).ok().flatten(),
         }
     }
 }

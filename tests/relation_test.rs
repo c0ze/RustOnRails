@@ -124,3 +124,27 @@ fn test_where_not_and_nil() {
     assert_eq!(1, Post::all().where_not("status", "draft").count(&mut ctx).unwrap());
     assert_eq!(2, Post::all().where_eq("published_at", None::<rustonrails::Time>).count(&mut ctx).unwrap());
 }
+
+// ActiveModel types serialize query values by column type (Rails 8.1.4):
+// numeric strings become integers, blanks and non-numbers become nil.
+#[test]
+fn test_query_values_are_cast_by_column_type() {
+    let mut ctx = support::ctx();
+    let alice = user(&mut ctx, "alice@example.com");
+    let id = post(&mut ctx, alice, "A", 1, 0);
+    assert_eq!(1, Post::all().where_eq("user_id", alice.to_string()).count(&mut ctx).unwrap());
+    assert_eq!(0, Post::all().where_eq("user_id", "").count(&mut ctx).unwrap());
+    assert_eq!(0, Post::all().where_eq("user_id", "abc").count(&mut ctx).unwrap());
+    assert_eq!(1, Post::all().where_eq("id", id as f64).count(&mut ctx).unwrap());
+    assert_eq!(1, Post::all().where_gte("created_at", "2020-01-01 00:00:00").count(&mut ctx).unwrap());
+    assert_eq!(1, Post::all().where_eq("status", 1).count(&mut ctx).unwrap());
+    assert_eq!(1, Post::all().where_eq("status", "1").count(&mut ctx).unwrap());
+    assert!(User::find_by(&mut ctx, "id", alice.to_string()).unwrap().is_some());
+}
+
+#[test]
+fn test_mismatched_parameters_are_errors_not_misread_bytes() {
+    let mut ctx = support::ctx();
+    assert!(ctx.query("SELECT $1::int8", &[Value::from("12345678")]).is_err());
+    assert!(ctx.query("SELECT $1::text", &[Value::Int(5)]).is_err());
+}

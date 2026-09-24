@@ -10,6 +10,8 @@ pub trait Record: Clone + Default + PartialEq + Send + 'static {
     fn new_record() -> Self;
     fn get(&self, column: &str) -> Value;
     fn set(&mut self, column: &str, value: Value) -> Result<()>;
+    /// A query value cast by the column's type (`where(user_id: "5")`).
+    fn cast_query(column: &str, value: Value) -> Value;
 
     fn id(&self) -> Option<i64> {
         match self.get("id") {
@@ -90,6 +92,13 @@ macro_rules! model {
                 match column {
                     $(stringify!($field) => $crate::Value::from(self.$field.clone()),)*
                     _ => $crate::Value::Nil,
+                }
+            }
+
+            fn cast_query(column: &str, value: $crate::Value) -> $crate::Value {
+                match column {
+                    $(stringify!($field) => <$ty as $crate::FromValue>::serialize(value).map_or($crate::Value::Nil, $crate::Value::from),)*
+                    _ => value,
                 }
             }
 

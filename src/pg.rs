@@ -35,6 +35,19 @@ pub(crate) fn read(row: &Row, index: usize) -> Result<Value> {
 
 impl ToSql for Value {
     fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> std::result::Result<IsNull, Box<dyn StdError + Sync + Send>> {
+        let fits = match self {
+            Value::Nil => true,
+            Value::Bool(_) => *ty == Type::BOOL,
+            Value::Int(_) => [Type::INT2, Type::INT4, Type::INT8, Type::FLOAT8].contains(ty),
+            Value::Float(_) => *ty == Type::FLOAT8,
+            Value::Str(_) => <String as ToSql>::accepts(ty),
+            Value::Time(_) => *ty == Type::TIMESTAMP,
+        };
+        if !fits {
+            // Binding by variant alone would write text bytes into a binary
+            // int8, which Postgres reads back as some other number.
+            return Err(format!("can't bind {self:?} to a {ty} parameter").into());
+        }
         match self {
             Value::Nil => Ok(IsNull::Yes),
             Value::Bool(b) => b.to_sql(ty, out),

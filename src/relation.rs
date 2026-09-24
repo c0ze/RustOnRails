@@ -84,7 +84,7 @@ impl<M: Model> Relation<M> {
                 Filter::Gte(c, v) => (c, ">=", v),
             };
             let target = format!("{table}.{}", quote(column));
-            match M::behavior().to_database(column, value.clone()) {
+            match M::behavior().to_database(column, M::cast_query(column, value.clone())) {
                 Value::Nil if op == "<>" => sql.push_str(&format!("{target} IS NOT NULL")),
                 Value::Nil => sql.push_str(&format!("{target} IS NULL")),
                 value => {
