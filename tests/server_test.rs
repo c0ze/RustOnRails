@@ -38,6 +38,7 @@ fn start(workers: usize) -> server::Running {
             let pid: i32 = req.ctx.query("SELECT pg_backend_pid()", &[]).unwrap()[0].get(0);
             Response::json(200, json!(pid))
         }))
+        .get("/big", Box::new(|_: &mut Request| Response::json(200, json!("x".repeat(4096)))))
         .post("/echo", Box::new(|req: &mut Request| {
             Response::json(201, json!({"name": req.params.get("name"), "page": req.params.get("page")}))
         }));
@@ -107,5 +108,43 @@ fn test_an_oversized_body_is_413() {
     let running = start(1);
     let request = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 20971520\r\nConnection: close\r\n\r\n";
     assert_eq!(413, send(running.address, request).0);
+    running.stop();
+}
+
+/// Reads one response off a keep-alive connection and returns its body length.
+fn read_response(stream: &mut TcpStream) -> usize {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).unwrap();
+        head.push(byte[0]);
+    }
+    let head = String::from_utf8(head).unwrap().to_ascii_lowercase();
+    let length: usize = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let mut body = vec![0u8; length];
+    stream.read_exact(&mut body).unwrap();
+    length
+}
+
+#[test]
+fn test_multi_segment_responses_are_not_held_back_by_nagle() {
+    // Headers and body leave in separate writes; without TCP_NODELAY the
+    // body waits for the client's delayed ACK, about 40 ms per request.
+    let running = start(1);
+    let mut stream = TcpStream::connect(running.address).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let started = std::time::Instant::now();
+    for _ in 0..10 {
+        stream.write_all(b"GET /big HTTP/1.1\r\nHost: test\r\n\r\n").unwrap();
+        assert!(read_response(&mut stream) > 4096);
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed < std::time::Duration::from_millis(150), "10 requests took {elapsed:?}");
     running.stop();
 }

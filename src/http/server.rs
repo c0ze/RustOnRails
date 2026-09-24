@@ -43,7 +43,12 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// thread, so a client that stalls mid-upload holds that thread, never a
 /// database worker; workers only see requests that are fully read.
 pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
-    let server = Arc::new(tiny_http::Server::http(config.address.as_str())?);
+    // Accepted sockets inherit TCP_NODELAY from the listener. tiny_http
+    // writes headers and body separately, and without it the body waits for
+    // the client's delayed ACK: about 40 ms on every multi-segment response.
+    let listener = std::net::TcpListener::bind(config.address.as_str())?;
+    socket2::SockRef::from(&listener).set_tcp_nodelay(true)?;
+    let server = Arc::new(tiny_http::Server::from_listener(listener, None)?);
     let address = server.server_addr().to_ip().ok_or("server has no IP address")?;
     let (jobs, queue) = channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));

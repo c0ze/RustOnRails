@@ -10,7 +10,8 @@ form_urlencoded = "1"
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
+socket2 = "0.6"
 tiny_http = "0.12"
 
 [workspace]
-members = ["examples/blog"]
+members = ["examples/blog", "tools/loadgen"]
