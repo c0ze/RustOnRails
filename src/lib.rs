@@ -9,6 +9,7 @@ mod behavior;
 mod ctx;
 mod error;
 mod model;
+mod persistence;
 mod pg;
 mod relation;
 mod validation;
