@@ -2,3 +2,4 @@
 //! it: one Rust file per Ruby file, comments pointing at the Ruby.
 
 pub mod models;
+pub mod routes;
