@@ -2,7 +2,7 @@ mod blog;
 mod support;
 
 use blog::fixtures::{self, Fixtures};
-use blog::{Comment, Post, PostScopes};
+use blog::{Comment, Post, PostScopes, User};
 use rustonrails::{Ctx, Model, Record, Value};
 
 fn setup() -> (Ctx, Fixtures) {
@@ -78,4 +78,42 @@ fn test_reload_clears_the_association_cache() {
     ctx.reload(post).unwrap();
     let user = Post::USER.get(&mut ctx, post).unwrap().unwrap();
     assert_eq!(Some("Renamed"), ctx[user].name.as_deref());
+}
+
+#[test]
+fn test_has_many_is_a_scoped_relation() {
+    let (mut ctx, fx) = setup();
+    let post = Post::find(&mut ctx, fx.published_old).unwrap();
+    let comments = Post::COMMENTS.of(&ctx, post).order_asc("created_at").load(&mut ctx).unwrap();
+    assert_eq!(vec![Some(fx.first)], comments.iter().map(|c| ctx[*c].id).collect::<Vec<_>>());
+}
+
+#[test]
+fn test_build_points_the_child_back_at_the_same_owner() {
+    let (mut ctx, fx) = setup();
+    let post = Post::find(&mut ctx, fx.published_new).unwrap();
+    let before = ctx[post].comments_count.unwrap();
+    let comment = Comment { user_id: Some(fx.alice), body: Some("Agreed".into()), ..Comment::new_record() };
+    let comment = Post::COMMENTS.build(&mut ctx, post, comment).unwrap();
+    assert_eq!(Some(fx.published_new), ctx[comment].post_id);
+    ctx.save_bang(comment).unwrap();
+    // after_create incremented the owner the controller holds, as in Rails.
+    assert_eq!(before + 1, ctx[post].comments_count.unwrap());
+}
+
+#[test]
+fn test_destroying_a_post_destroys_its_comments() {
+    let (mut ctx, fx) = setup();
+    let post = Post::find(&mut ctx, fx.published_old).unwrap();
+    ctx.destroy_bang(post).unwrap();
+    assert_eq!(0, Comment::all().where_eq("post_id", fx.published_old).count(&mut ctx).unwrap());
+}
+
+#[test]
+fn test_destroying_a_user_cascades() {
+    let (mut ctx, fx) = setup();
+    let alice = User::find(&mut ctx, fx.alice).unwrap();
+    ctx.destroy_bang(alice).unwrap();
+    assert_eq!(0, Post::all().where_eq("user_id", fx.alice).count(&mut ctx).unwrap());
+    assert_eq!(0, Comment::all().count(&mut ctx).unwrap());
 }

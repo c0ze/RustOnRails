@@ -7,7 +7,7 @@ pub mod fixtures;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use rustonrails::{Behavior, BelongsTo, Check, Ctx, Error, Handle, Model, Relation, Result, Time, model, now};
+use rustonrails::{Behavior, BelongsTo, Check, HasMany, Ctx, Error, Handle, Model, Relation, Result, Time, model, now};
 
 // application_record.rb:4  scope :created_since, ->(time) { where(created_at: time..) }
 pub trait ApplicationRecordScopes {
@@ -34,10 +34,20 @@ model! {
 /// URI::MailTo::EMAIL_REGEXP, verbatim.
 const EMAIL_REGEXP: &str = r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\z";
 
+impl User {
+    // user.rb:2-3
+    pub const POSTS: HasMany<User, Post> = HasMany::new("posts", "user_id", Some("user"));
+    pub const COMMENTS: HasMany<User, Comment> = HasMany::new("comments", "user_id", Some("user"));
+}
+
 impl Model for User {
     fn behavior() -> &'static Behavior<Self> {
         static BEHAVIOR: LazyLock<Behavior<User>> = LazyLock::new(|| {
             Behavior::<User>::new()
+                // user.rb:2  has_many :posts, dependent: :destroy
+                .before_destroy(|ctx, user| User::POSTS.destroy_all(ctx, user))
+                // user.rb:3  has_many :comments, dependent: :destroy
+                .before_destroy(|ctx, user| User::COMMENTS.destroy_all(ctx, user))
                 // user.rb:5  before_validation { self.email = email.to_s.strip.downcase }
                 .before_validation(|ctx, user| {
                     let email = ctx[user].email.clone().unwrap_or_default();
@@ -73,6 +83,8 @@ model! {
 impl Post {
     // post.rb:2
     pub const USER: BelongsTo<Post, User> = BelongsTo::new("user", "user_id");
+    // post.rb:3
+    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some("post"));
 
     // post.rb:5  enum :status gives published? and draft?
     pub fn is_published(&self) -> bool {
@@ -99,6 +111,8 @@ impl Model for Post {
             Behavior::<Post>::new()
                 // post.rb:2
                 .belongs_to(&Post::USER)
+                // post.rb:3  has_many :comments, dependent: :destroy
+                .before_destroy(|ctx, post| Post::COMMENTS.destroy_all(ctx, post))
                 // post.rb:5
                 .enumeration("status", &[("draft", 0), ("published", 1)], true)
                 // post.rb:7

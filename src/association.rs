@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{Ctx, Handle, Model, Result, Value};
+use crate::{Ctx, Handle, Model, Relation, Result, Value};
 
 /// Loads an association for many owners at once, for `includes`.
 pub trait Preload<M>: Sync {
@@ -69,6 +69,52 @@ impl<M: Model, T: Model> Preload<M> for BelongsTo<M, T> {
                 let index = target.index();
                 ctx.cache(*owner, self.name, key, index);
             }
+        }
+        Ok(())
+    }
+}
+
+/// `has_many :comments`, declared as a constant on the owner model.
+/// `inverse` names the child's `belongs_to` back to the owner, which Rails
+/// works out on its own for conventional names.
+pub struct HasMany<M, T> {
+    pub name: &'static str,
+    pub foreign_key: &'static str,
+    pub inverse: Option<&'static str>,
+    marker: PhantomData<fn() -> (M, T)>,
+}
+
+impl<M, T> HasMany<M, T> {
+    pub const fn new(name: &'static str, foreign_key: &'static str, inverse: Option<&'static str>) -> Self {
+        Self { name, foreign_key, inverse, marker: PhantomData }
+    }
+}
+
+impl<M: Model, T: Model> HasMany<M, T> {
+    /// `post.comments`: a relation scoped to the owner.
+    pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
+        T::all().where_eq(self.foreign_key, ctx[owner].get("id"))
+    }
+
+    /// `post.comments.new(attributes)`: sets the foreign key and points the
+    /// child's `belongs_to` at this very owner, so callbacks on either side
+    /// see one record.
+    pub fn build(&self, ctx: &mut Ctx, owner: Handle<M>, record: T) -> Result<Handle<T>> {
+        let key = ctx[owner].get("id");
+        let child = ctx.build(record);
+        ctx[child].set(self.foreign_key, key.clone())?;
+        if let Some(inverse) = self.inverse {
+            ctx.cache(child, inverse, key, owner.index());
+        }
+        Ok(child)
+    }
+
+    /// `dependent: :destroy`: destroys each associated record through its
+    /// own callbacks; a child that refuses stops the owner's destroy.
+    pub fn destroy_all(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<()> {
+        let children = self.of(ctx, owner).load(ctx)?;
+        for child in children {
+            ctx.destroy_bang(child)?;
         }
         Ok(())
     }
