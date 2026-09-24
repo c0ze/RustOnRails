@@ -26,6 +26,8 @@ pub enum Error {
     InvalidEnum { attribute: &'static str, value: String },
     /// Writing a record that was never saved, like `increment!` on a new one.
     NotPersisted { model: &'static str },
+    /// `ActionController::ParameterMissing`
+    ParameterMissing { key: &'static str },
     /// Anything the database reported.
     Db(postgres::Error),
 }
@@ -44,6 +46,7 @@ impl fmt::Display for Error {
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}."),
             Error::InvalidEnum { attribute, value } => write!(f, "'{value}' is not a valid {attribute}"),
             Error::NotPersisted { model } => write!(f, "cannot update a new {model}"),
+            Error::ParameterMissing { key } => write!(f, "param is missing or the value is empty or invalid: {key}"),
             Error::Db(e) => match e.as_db_error() {
                 Some(db) => write!(f, "{}: {}", db.severity(), db.message()),
                 None => write!(f, "{e}"),
