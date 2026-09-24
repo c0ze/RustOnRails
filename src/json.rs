@@ -83,6 +83,11 @@ impl<M: Model> AsJson<M> {
         Ok(Json::Object(map))
     }
 
+    /// `render json: @post` when `@post` may be nil, which renders `null`.
+    pub fn render_option(&self, ctx: &mut Ctx, record: Option<Handle<M>>) -> Result<Json> {
+        record.map_or(Ok(Json::Null), |record| self.render(ctx, record))
+    }
+
     pub fn render_all(&self, ctx: &mut Ctx, records: &[Handle<M>]) -> Result<Json> {
         let rendered = records.iter().map(|record| self.render(ctx, *record)).collect::<Result<Vec<_>>>()?;
         Ok(Json::Array(rendered))

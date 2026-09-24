@@ -56,3 +56,13 @@ fn test_errors_render_by_attribute() {
     assert_eq!(json!(["must exist"]), rendered["user"]);
     assert_eq!(json!(["can't be blank"]), rendered["title"]);
 }
+
+#[test]
+fn test_render_option_renders_nil_as_null() {
+    let mut ctx = support::ctx();
+    let fx = fixtures::load(&mut ctx);
+    let post = Post::find(&mut ctx, fx.draft).unwrap();
+    let options = AsJson::<Post>::new();
+    assert_eq!(json!(null), options.render_option(&mut ctx, None).unwrap());
+    assert_eq!(options.render(&mut ctx, post).unwrap(), options.render_option(&mut ctx, Some(post)).unwrap());
+}

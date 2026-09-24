@@ -85,3 +85,11 @@ fn test_constraints_see_the_routes_path_params() {
     let mut other = Request::new(numeric.ctx, "GET", "/things/abc");
     assert_eq!(json!({"route": "other", "params": {"id": "abc"}}), router.call(&mut other).body_json());
 }
+
+#[test]
+fn test_health_answers_like_rails_health_controller() {
+    let mut req = Request::new(support::ctx(), "GET", "/up");
+    let response = rustonrails::health(&mut req);
+    assert_eq!((200, Some("text/html; charset=utf-8")), (response.status, response.content_type));
+    assert!(String::from_utf8(response.body).unwrap().contains("background-color: green"));
+}
