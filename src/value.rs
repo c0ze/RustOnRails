@@ -1,6 +1,6 @@
 use chrono::{NaiveDateTime, SubsecRound, Utc};
 
-use crate::{Error, Result};
+use crate::cast::ruby_float;
 
 /// Times are UTC without a zone, the way Rails stores `datetime` columns.
 pub type Time = NaiveDateTime;
@@ -43,7 +43,7 @@ impl Value {
             Value::Nil => String::new(),
             Value::Bool(b) => b.to_string(),
             Value::Int(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => ruby_float(*f),
             Value::Str(s) => s.clone(),
             Value::Time(t) => t.to_string(),
         }
@@ -61,82 +61,5 @@ impl From<Time> for Value { fn from(v: Time) -> Self { Value::Time(v) } }
 impl<T: Into<Value>> From<Option<T>> for Value {
     fn from(v: Option<T>) -> Self {
         v.map_or(Value::Nil, Into::into)
-    }
-}
-
-/// Casts an assigned value to an attribute's type the way Active Model
-/// types do: "42" becomes 42 for an integer column, "" becomes nil.
-pub trait FromValue: Sized {
-    fn from_value(value: Value) -> Result<Option<Self>>;
-}
-
-impl FromValue for i64 {
-    fn from_value(value: Value) -> Result<Option<Self>> {
-        match value {
-            Value::Nil => Ok(None),
-            Value::Int(i) => Ok(Some(i)),
-            Value::Float(f) => Ok(Some(f as i64)),
-            Value::Bool(b) => Ok(Some(b.into())),
-            Value::Str(s) => Ok(leading_integer(&s)),
-            other => Err(Error::Cast { expected: "integer", value: other }),
-        }
-    }
-}
-
-/// `"12abc".to_i` is 12, but Active Model casts a string with no leading
-/// digits to nil rather than 0.
-fn leading_integer(s: &str) -> Option<i64> {
-    let s = s.trim_start();
-    let sign_len = usize::from(s.starts_with(['+', '-']));
-    let digits = s[sign_len..].chars().take_while(char::is_ascii_digit).count();
-    if digits == 0 { None } else { s[..sign_len + digits].parse().ok() }
-}
-
-impl FromValue for f64 {
-    fn from_value(value: Value) -> Result<Option<Self>> {
-        match value {
-            Value::Nil => Ok(None),
-            Value::Float(f) => Ok(Some(f)),
-            Value::Int(i) => Ok(Some(i as f64)),
-            Value::Str(s) if s.trim().is_empty() => Ok(None),
-            Value::Str(s) => Ok(s.trim().parse().ok()),
-            other => Err(Error::Cast { expected: "float", value: other }),
-        }
-    }
-}
-
-impl FromValue for bool {
-    fn from_value(value: Value) -> Result<Option<Self>> {
-        match value {
-            Value::Nil => Ok(None),
-            Value::Bool(b) => Ok(Some(b)),
-            Value::Int(i) => Ok(Some(i != 0)),
-            Value::Str(s) if s.is_empty() => Ok(None),
-            Value::Str(s) => Ok(Some(!matches!(s.as_str(), "0" | "f" | "F" | "false" | "FALSE" | "off" | "OFF"))),
-            other => Err(Error::Cast { expected: "boolean", value: other }),
-        }
-    }
-}
-
-impl FromValue for String {
-    fn from_value(value: Value) -> Result<Option<Self>> {
-        Ok(match value {
-            Value::Nil => None,
-            Value::Bool(b) => Some(if b { "t" } else { "f" }.to_string()),
-            other => Some(other.to_ruby_string()),
-        })
-    }
-}
-
-impl FromValue for Time {
-    fn from_value(value: Value) -> Result<Option<Self>> {
-        match value {
-            Value::Nil => Ok(None),
-            Value::Time(t) => Ok(Some(t)),
-            Value::Str(s) => Ok(["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"]
-                .iter()
-                .find_map(|format| NaiveDateTime::parse_from_str(s.trim().trim_end_matches('Z'), format).ok())),
-            other => Err(Error::Cast { expected: "datetime", value: other }),
-        }
     }
 }

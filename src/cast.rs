@@ -1,0 +1,138 @@
+use std::sync::LazyLock;
+
+use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use regex::Regex;
+
+use crate::{Error, Result, Time, Value};
+
+/// Casts an assigned value to an attribute's type the way Active Model
+/// types do (checked against Rails 8.1.4): "42" becomes 42, "abc" becomes 0
+/// as `to_i` would, and a blank string becomes nil.
+pub trait FromValue: Sized {
+    fn from_value(value: Value) -> Result<Option<Self>>;
+}
+
+static LEADING_INTEGER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[+-]?\d+").expect("regex"));
+static LEADING_FLOAT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?").expect("regex"));
+
+/// Ruby's `String#to_i`: the leading integer, 0 when there is none.
+fn to_i(s: &str) -> i64 {
+    LEADING_INTEGER.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0)
+}
+
+/// Ruby's `String#to_f`: the leading number, 0.0 when there is none.
+fn to_f(s: &str) -> f64 {
+    LEADING_FLOAT.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0.0)
+}
+
+impl FromValue for i64 {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Int(i) => Ok(Some(i)),
+            Value::Float(f) => Ok(Some(f as i64)),
+            Value::Bool(b) => Ok(Some(b.into())),
+            Value::Str(s) if s.trim().is_empty() => Ok(None),
+            Value::Str(s) => Ok(Some(to_i(&s))),
+            other => Err(Error::Cast { expected: "integer", value: other }),
+        }
+    }
+}
+
+impl FromValue for f64 {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Float(f) => Ok(Some(f)),
+            Value::Int(i) => Ok(Some(i as f64)),
+            Value::Str(s) if s.trim().is_empty() => Ok(None),
+            Value::Str(s) => Ok(Some(to_f(&s))),
+            other => Err(Error::Cast { expected: "float", value: other }),
+        }
+    }
+}
+
+impl FromValue for bool {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Bool(b) => Ok(Some(b)),
+            Value::Int(i) => Ok(Some(i != 0)),
+            Value::Str(s) if s.is_empty() => Ok(None),
+            Value::Str(s) => Ok(Some(!matches!(s.as_str(), "0" | "f" | "F" | "false" | "FALSE" | "off" | "OFF"))),
+            other => Err(Error::Cast { expected: "boolean", value: other }),
+        }
+    }
+}
+
+impl FromValue for String {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        Ok(match value {
+            Value::Nil => None,
+            Value::Bool(b) => Some(if b { "t" } else { "f" }.to_string()),
+            other => Some(other.to_ruby_string()),
+        })
+    }
+}
+
+impl FromValue for Time {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Time(t) => Ok(Some(t)),
+            Value::Str(s) => Ok(parse_time(s.trim())),
+            other => Err(Error::Cast { expected: "datetime", value: other }),
+        }
+    }
+}
+
+/// The datetime strings Rails accepts in practice: ISO 8601 with or without
+/// an offset (converted to UTC), a space instead of `T`, or a bare date
+/// (midnight). Anything else is nil, as in Rails.
+fn parse_time(s: &str) -> Option<Time> {
+    if let Ok(time) = DateTime::parse_from_rfc3339(s) {
+        return Some(time.naive_utc());
+    }
+    for format in ["%Y-%m-%d %H:%M:%S%.f %z", "%Y-%m-%d %H:%M:%S%.f%:z"] {
+        if let Ok(time) = DateTime::parse_from_str(s, format) {
+            return Some(time.naive_utc());
+        }
+    }
+    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"] {
+        if let Ok(time) = NaiveDateTime::parse_from_str(s, format) {
+            return Some(time);
+        }
+    }
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|date| date.and_hms_opt(0, 0, 0))
+}
+
+/// Ruby's `Float#to_s`: shortest digits, always a decimal point, and
+/// scientific notation outside 1e-4..1e16 ("1.0", "1.0e+20").
+pub(crate) fn ruby_float(f: f64) -> String {
+    if f.is_nan() {
+        return "NaN".into();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "Infinity" } else { "-Infinity" }.into();
+    }
+    let sign = if f < 0.0 { "-" } else { "" };
+    let scientific = format!("{:e}", f.abs());
+    let (mantissa, exponent) = scientific.split_once('e').expect("{:e} has an exponent");
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let point: i32 = exponent.parse::<i32>().expect("integer exponent") + 1;
+    let body = if f == 0.0 {
+        "0.0".to_string()
+    } else if (1..=16).contains(&point) {
+        let point = point as usize;
+        let int = format!("{digits:0<point$}");
+        let frac = digits.get(point..).filter(|d| !d.is_empty()).unwrap_or("0");
+        format!("{}.{frac}", &int[..point])
+    } else if (-3..=0).contains(&point) {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let rest = if digits.len() > 1 { &digits[1..] } else { "0" };
+        format!("{}.{rest}e{:+03}", &digits[..1], point - 1)
+    };
+    format!("{sign}{body}")
+}

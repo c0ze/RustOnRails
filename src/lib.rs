@@ -6,6 +6,7 @@
 //! and code refers to records through `Handle`s. See `docs/design.md`.
 
 mod behavior;
+mod cast;
 mod ctx;
 mod error;
 mod model;
@@ -17,9 +18,10 @@ mod value;
 mod write;
 
 pub use behavior::{Behavior, Check, Cond, Event, Hook};
+pub use cast::FromValue;
 pub use ctx::{Ctx, Handle};
 pub use error::{Error, Result};
 pub use model::{Model, Record};
 pub use relation::Relation;
 pub use validation::Errors;
-pub use value::{FromValue, Time, Value, now};
+pub use value::{Time, Value, now};
