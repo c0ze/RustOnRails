@@ -47,6 +47,7 @@ pub fn reason(status: u16) -> &'static str {
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        413 => "Content Too Large",
         422 => "Unprocessable Content",
         500 => "Internal Server Error",
         _ => "Unknown",

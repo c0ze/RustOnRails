@@ -8,6 +8,8 @@ use rustonrails::{Json, Request, Response, Router, json};
 
 fn send(address: SocketAddr, request: &str) -> (u16, Json) {
     let mut stream = TcpStream::connect(address).unwrap();
+    // A blocked server fails the test instead of hanging it.
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
     stream.write_all(request.as_bytes()).unwrap();
     let mut raw = String::new();
     stream.read_to_string(&mut raw).unwrap();
@@ -85,5 +87,25 @@ fn test_a_dead_connection_is_replaced() {
     get(running.address, "/users/count");
     assert_eq!(200, get(running.address, "/users/count").0);
     assert_eq!(200, get(running.address, "/users/count").0);
+    running.stop();
+}
+
+#[test]
+fn test_a_stalled_upload_does_not_block_other_requests() {
+    let running = start(1);
+    let mut stalled = TcpStream::connect(running.address).unwrap();
+    let head = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n{";
+    stalled.write_all(head.as_bytes()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(200, get(running.address, "/up").0);
+    drop(stalled);
+    running.stop();
+}
+
+#[test]
+fn test_an_oversized_body_is_413() {
+    let running = start(1);
+    let request = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 20971520\r\nConnection: close\r\n\r\n";
+    assert_eq!(413, send(running.address, request).0);
     running.stop();
 }
