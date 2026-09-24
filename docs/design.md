@@ -19,8 +19,9 @@ Generated code is synchronous, like the Ruby it comes from. Rails serves concurr
 | database | postgres (blocking), Postgres first |
 | time | chrono (`NaiveDateTime` in UTC, as Rails stores `datetime`) |
 | validations | regex |
-| HTTP, routing | undecided; the controller plan picks it |
-| JSON | serde_json, when rendering arrives |
+| HTTP | tiny_http (blocking, a fixed worker pool); routing is our own regex matcher |
+| JSON | serde_json with `preserve_order`, so rendered keys keep column order |
+| query strings | form_urlencoded |
 | decimals | rust_decimal, when a decimal column arrives |
 
 ## Memory model
@@ -87,15 +88,30 @@ let posts = Post::all().visible().recent().load(ctx)?;            // Post.visibl
 
 One rule for generated code: an argument that reads the `Ctx` has to be evaluated into a local before a call that borrows the `Ctx` mutably. `Post::find(ctx, ctx[comment].post_id)` doesn't compile; `let id = ctx[comment].post_id; Post::find(ctx, id)` does.
 
+## Web layer
+
+Associations are constants on the owner model, so a generated controller reads like the Ruby:
+
+```rust
+impl Post {
+    pub const USER: BelongsTo<Post, User> = BelongsTo::new("user", "user_id");
+    pub const COMMENTS: HasMany<Post, Comment> = HasMany::new("comments", "post_id", Some("post"));
+}
+
+let posts = Post::all().visible().recent().includes(&Post::USER).limit(20).load(ctx)?;
+let comment = Post::COMMENTS.build(ctx, post, Comment::from_attributes(&attributes)?)?;
+```
+
+`belongs_to` targets are cached on the owner (per foreign key, so a changed key reloads), `includes` fills that cache with one `IN` query, and `has_many#build` points the child back at the very owner record, which is Rails' automatic `inverse_of`. `dependent: :destroy` is an explicit `before_destroy` calling `destroy_all`, in declaration order.
+
+A controller is a `Default` struct whose fields are its instance variables. `Controller::before` is the `before_action` chain written out as a match on the action name, `rescue` is `rescue_from`, and `wrap_parameters` gives the wrapper key and attribute names. Routes are built in `routes.rb` order with `action::<Controller>("show", Controller::show)`, and a constraint that fails falls through to the next route. An error nobody rescues becomes Rails' default status and the exceptions app's `{"status":404,"error":"Not Found"}`.
+
+The server runs tiny_http with a fixed pool of worker threads, each owning one Postgres connection and building a fresh `Ctx` per request; a panicking handler costs a 500 and that worker's connection, not the process.
+
 ## Planned modules
 
-- `record`: model trait, attributes, dirty tracking, validations, callbacks, `Relation<T>` as a lazy query builder, associations, the per-request record table
-- `controller`: filter chains, strong params, `render`, `rescue_from`, `head`
-- `routing`: routes from Rutile's manifest mounted onto axum
-- `value`: the dynamic `Value` enum used where Rutile couldn't infer a type
-- `support`: ActiveSupport pieces generated code needs (`blank?`/`present?`, time zones, `1.day.ago`, inflections)
-
-The PoC needs `record`, `controller` and `routing`, plus enough of `support` for the test app.
+- `support`: ActiveSupport pieces generated code needs (`blank?`/`present?`, time zones, `1.day.ago`, inflections, a Ruby-compatible `strip`)
+- `value`: the dynamic `Value` enum used where Rutile couldn't infer a type (exists; grows with codegen)
 
 ## Gem adapters
 

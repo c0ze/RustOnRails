@@ -28,6 +28,7 @@ pub use cast::FromValue;
 pub use ctx::Ctx;
 pub use error::{Error, Result};
 pub use http::{Action, Constraint, Controller, Handler, Params, Request, Response, Router, action, error_page, error_response, parse_query, reason, status};
+pub use http::server;
 pub use json::{AsJson, errors_json, format_time, value_json};
 pub use records::Handle;
 pub use model::{Attributes, Model, Record};

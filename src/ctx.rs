@@ -32,6 +32,12 @@ impl Ctx {
         Ok(Self { client, depth: 1, tables: HashMap::new() })
     }
 
+    /// Gives the connection back, dropping every record this `Ctx` held;
+    /// the server reuses one connection per worker across requests.
+    pub fn into_client(self) -> Client {
+        self.client
+    }
+
     pub fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Row>> {
         Ok(self.client.query(sql, &refs(params))?)
     }
