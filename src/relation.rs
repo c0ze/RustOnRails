@@ -13,9 +13,20 @@ enum Filter {
     In(String, Vec<Value>),
 }
 
+/// `has_many :through`'s inner join: the join table, its key to the
+/// target, and its key to the owner with the owner's id.
+#[derive(Clone, Debug)]
+struct Join {
+    table: &'static str,
+    target_key: &'static str,
+    owner_key: &'static str,
+    owner_id: Value,
+}
+
 /// A lazy query, like `ActiveRecord::Relation`: nothing runs until `load`,
 /// `first`, `count`, `exists` or a finder.
 pub struct Relation<M: 'static> {
+    join: Option<Join>,
     filters: Vec<Filter>,
     orders: Vec<(String, &'static str)>,
     limit: Option<i64>,
@@ -26,6 +37,7 @@ pub struct Relation<M: 'static> {
 impl<M: 'static> Clone for Relation<M> {
     fn clone(&self) -> Self {
         Self {
+            join: self.join.clone(),
             filters: self.filters.clone(),
             orders: self.orders.clone(),
             limit: self.limit,
@@ -37,13 +49,20 @@ impl<M: 'static> Clone for Relation<M> {
 
 impl<M: Model> Default for Relation<M> {
     fn default() -> Self {
-        Self { filters: Vec::new(), orders: Vec::new(), limit: None, includes: Vec::new(), marker: PhantomData }
+        Self { join: None, filters: Vec::new(), orders: Vec::new(), limit: None, includes: Vec::new(), marker: PhantomData }
     }
 }
 
 impl<M: Model> Relation<M> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The rows of `table` whose `owner_key` is `owner_id`, joined to this
+    /// relation's table on `target_key`: what `has_many :through` builds.
+    pub fn join_through(mut self, table: &'static str, target_key: &'static str, owner_key: &'static str, owner_id: Value) -> Self {
+        self.join = Some(Join { table, target_key, owner_key, owner_id });
+        self
     }
 
     /// `where(column: value)`. Enum columns take the label, as in Rails.
@@ -99,8 +118,22 @@ impl<M: Model> Relation<M> {
         let columns: Vec<String> = M::COLUMNS.iter().map(|c| format!("{table}.{}", quote(c))).collect();
         let mut sql = format!("SELECT {} FROM {table}", columns.join(", "));
         let mut params = Vec::new();
-        for (i, filter) in self.filters.iter().enumerate() {
-            sql.push_str(if i == 0 { " WHERE " } else { " AND " });
+        let mut conditions = 0;
+        if let Some(join) = &self.join {
+            let through = quote(join.table);
+            sql.push_str(&format!(" INNER JOIN {through} ON {table}.{} = {through}.{}", quote("id"), quote(join.target_key)));
+            // An owner without an id (unsaved) has nothing through it, as Rails' `none`.
+            if join.owner_id.is_nil() {
+                sql.push_str(" WHERE 1=0");
+            } else {
+                params.push(join.owner_id.clone());
+                sql.push_str(&format!(" WHERE {through}.{} = ${}", quote(join.owner_key), params.len()));
+            }
+            conditions += 1;
+        }
+        for filter in &self.filters {
+            sql.push_str(if conditions == 0 { " WHERE " } else { " AND " });
+            conditions += 1;
             let (column, op, value) = match filter {
                 Filter::In(column, values) => {
                     let target = format!("{table}.{}", quote(column));
@@ -169,6 +202,13 @@ impl<M: Model> Relation<M> {
         let (sql, params) = self.to_sql();
         let rows = ctx.query(&format!("SELECT COUNT(*) FROM ({sql}) AS subquery"), &params)?;
         Ok(rows[0].get(0))
+    }
+
+    /// `include?(record)` on a relation that isn't loaded: an `exists?`
+    /// query on the record's id. Nil, or a record without an id, is false.
+    pub fn contains(&self, ctx: &mut Ctx, record: impl Into<Option<Handle<M>>>) -> Result<bool> {
+        let Some(id) = record.into().and_then(|record| ctx[record].id()) else { return Ok(false) };
+        self.clone().where_eq("id", id).exists(ctx)
     }
 
     pub fn exists(&self, ctx: &mut Ctx) -> Result<bool> {

@@ -24,7 +24,7 @@ mod validation;
 mod value;
 mod write;
 
-pub use association::{BelongsTo, HasMany, Preload};
+pub use association::{BelongsTo, HasMany, HasManyThrough, Preload};
 pub use behavior::{Behavior, Check, Cond, Event, Hook};
 pub use cast::FromValue;
 pub use ctx::Ctx;

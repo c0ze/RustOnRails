@@ -120,3 +120,28 @@ impl<M: Model, T: Model> HasMany<M, T> {
         Ok(())
     }
 }
+
+/// `has_many :projects, through: :memberships`: the owner's rows in the
+/// join table, and the targets they point at. Only the join-model shape:
+/// through a has_many, sourced from a belongs_to on the join model.
+pub struct HasManyThrough<M: 'static, T: 'static> {
+    pub name: &'static str,
+    pub join_table: &'static str,
+    pub owner_key: &'static str,
+    pub target_key: &'static str,
+    marker: PhantomData<fn() -> (M, T)>,
+}
+
+impl<M: 'static, T: 'static> HasManyThrough<M, T> {
+    pub const fn new(name: &'static str, join_table: &'static str, owner_key: &'static str, target_key: &'static str) -> Self {
+        Self { name, join_table, owner_key, target_key, marker: PhantomData }
+    }
+}
+
+impl<M: Model, T: Model> HasManyThrough<M, T> {
+    /// `user.projects`: the same SQL Rails generates, an inner join with no
+    /// DISTINCT, as a relation every scope and finder works on.
+    pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
+        Relation::new().join_through(self.join_table, self.target_key, self.owner_key, ctx[owner].get("id"))
+    }
+}
