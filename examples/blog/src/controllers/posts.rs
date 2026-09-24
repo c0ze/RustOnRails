@@ -34,7 +34,7 @@ impl Controller for PostsController {
     }
 
     fn before(&mut self, req: &mut Request, action: &str) -> Result<Option<Response>> {
-        // before_action :set_post, only: ["destroy", "show", "update"]
+        // before_action :set_post
         if matches!(action, "destroy" | "show" | "update") {
             self.set_post(req)?;
         }
