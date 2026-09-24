@@ -1,5 +1,6 @@
 use regex::Regex;
 
+use crate::association::BelongsTo;
 use crate::enums::EnumDef;
 use crate::{Ctx, Handle, Record, Result, Value};
 
@@ -81,8 +82,9 @@ impl<M> Behavior<M> {
     }
 
     /// `belongs_to :user`: adds the "must exist" check Rails adds.
-    pub fn belongs_to<T: Record>(self, name: &'static str, foreign_key: &'static str) -> Self {
-        self.validates(name, Check::Required { foreign_key, table: T::TABLE })
+    pub fn belongs_to<T: Record>(self, association: &BelongsTo<M, T>) -> Self {
+        let check = Check::Required { foreign_key: association.foreign_key, table: T::TABLE };
+        self.validates(association.name, check)
     }
 
     /// `enum :status, { draft: 0 }`; `validate` is Rails' `validate: true`.

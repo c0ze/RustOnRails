@@ -7,7 +7,7 @@ pub mod fixtures;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Relation, Result, Time, model, now};
+use rustonrails::{Behavior, BelongsTo, Check, Ctx, Error, Handle, Model, Relation, Result, Time, model, now};
 
 // application_record.rb:4  scope :created_since, ->(time) { where(created_at: time..) }
 pub trait ApplicationRecordScopes {
@@ -71,6 +71,9 @@ model! {
 }
 
 impl Post {
+    // post.rb:2
+    pub const USER: BelongsTo<Post, User> = BelongsTo::new("user", "user_id");
+
     // post.rb:5  enum :status gives published? and draft?
     pub fn is_published(&self) -> bool {
         self.status.as_deref() == Some("published")
@@ -95,7 +98,7 @@ impl Model for Post {
         static BEHAVIOR: LazyLock<Behavior<Post>> = LazyLock::new(|| {
             Behavior::<Post>::new()
                 // post.rb:2
-                .belongs_to::<User>("user", "user_id")
+                .belongs_to(&Post::USER)
                 // post.rb:5
                 .enumeration("status", &[("draft", 0), ("published", 1)], true)
                 // post.rb:7
@@ -139,17 +142,13 @@ model! {
 }
 
 impl Comment {
-    /// `comment.post` (belongs_to :post). Not cached yet; see docs/design.md.
-    pub fn post(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<Option<Handle<Post>>> {
-        match ctx[comment].post_id {
-            Some(id) => Post::find_by(ctx, "id", id),
-            None => Ok(None),
-        }
-    }
+    // comment.rb:2-3
+    pub const POST: BelongsTo<Comment, Post> = BelongsTo::new("post", "post_id");
+    pub const USER: BelongsTo<Comment, User> = BelongsTo::new("user", "user_id");
 
     // comment.rb:12
     fn post_is_published(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<()> {
-        if let Some(post) = Comment::post(ctx, comment)? {
+        if let Some(post) = Comment::POST.get(ctx, comment)? {
             if ctx[post].is_draft() {
                 ctx.errors_mut(comment).add("post", "must be published");
             }
@@ -159,7 +158,7 @@ impl Comment {
 
     // comment.rb:16  post.increment!(:comments_count)
     fn bump_post_counter(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<()> {
-        let post = Comment::post(ctx, comment)?.ok_or(Error::Nil { what: "increment!" })?;
+        let post = Comment::POST.get(ctx, comment)?.ok_or(Error::Nil { what: "increment!" })?;
         ctx.increment_bang(post, "comments_count", 1)
     }
 }
@@ -169,8 +168,8 @@ impl Model for Comment {
         static BEHAVIOR: LazyLock<Behavior<Comment>> = LazyLock::new(|| {
             Behavior::<Comment>::new()
                 // comment.rb:2-3
-                .belongs_to::<Post>("post", "post_id")
-                .belongs_to::<User>("user", "user_id")
+                .belongs_to(&Comment::POST)
+                .belongs_to(&Comment::USER)
                 // comment.rb:5
                 .validates("body", Check::Presence)
                 .validates("body", Check::Length { minimum: None, maximum: Some(2000) })

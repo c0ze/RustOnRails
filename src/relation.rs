@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use postgres::Row;
-
-use crate::pg::{self, quote};
+use crate::association::Preload;
+use crate::pg::quote;
+use crate::records::from_row;
 use crate::{Ctx, Error, Handle, Model, Result, Value};
 
 #[derive(Clone, Debug)]
@@ -10,26 +10,34 @@ enum Filter {
     Eq(String, Value),
     NotEq(String, Value),
     Gte(String, Value),
+    In(String, Vec<Value>),
 }
 
 /// A lazy query, like `ActiveRecord::Relation`: nothing runs until `load`,
 /// `first`, `count`, `exists` or a finder.
-pub struct Relation<M> {
+pub struct Relation<M: 'static> {
     filters: Vec<Filter>,
     orders: Vec<(String, &'static str)>,
     limit: Option<i64>,
+    includes: Vec<&'static dyn Preload<M>>,
     marker: PhantomData<fn() -> M>,
 }
 
-impl<M> Clone for Relation<M> {
+impl<M: 'static> Clone for Relation<M> {
     fn clone(&self) -> Self {
-        Self { filters: self.filters.clone(), orders: self.orders.clone(), limit: self.limit, marker: PhantomData }
+        Self {
+            filters: self.filters.clone(),
+            orders: self.orders.clone(),
+            limit: self.limit,
+            includes: self.includes.clone(),
+            marker: PhantomData,
+        }
     }
 }
 
 impl<M: Model> Default for Relation<M> {
     fn default() -> Self {
-        Self { filters: Vec::new(), orders: Vec::new(), limit: None, marker: PhantomData }
+        Self { filters: Vec::new(), orders: Vec::new(), limit: None, includes: Vec::new(), marker: PhantomData }
     }
 }
 
@@ -53,6 +61,18 @@ impl<M: Model> Relation<M> {
     /// `where(column: value..)`
     pub fn where_gte(mut self, column: &str, value: impl Into<Value>) -> Self {
         self.filters.push(Filter::Gte(column.to_string(), value.into()));
+        self
+    }
+
+    /// `where(column: [a, b])`; an empty list matches nothing (`1=0`).
+    pub fn where_in(mut self, column: &str, values: Vec<Value>) -> Self {
+        self.filters.push(Filter::In(column.to_string(), values));
+        self
+    }
+
+    /// `includes(:user)`: preloads the association after `load`.
+    pub fn includes(mut self, association: &'static dyn Preload<M>) -> Self {
+        self.includes.push(association);
         self
     }
 
@@ -82,6 +102,23 @@ impl<M: Model> Relation<M> {
         for (i, filter) in self.filters.iter().enumerate() {
             sql.push_str(if i == 0 { " WHERE " } else { " AND " });
             let (column, op, value) = match filter {
+                Filter::In(column, values) => {
+                    let target = format!("{table}.{}", quote(column));
+                    let cast: Vec<Value> = values
+                        .iter()
+                        .map(|v| M::behavior().to_database(column, M::cast_query(column, v.clone())))
+                        .filter(|v| !v.is_nil())
+                        .collect();
+                    if cast.is_empty() {
+                        sql.push_str("1=0");
+                    } else {
+                        let start = params.len();
+                        params.extend(cast);
+                        let marks: Vec<String> = (start + 1..=params.len()).map(|i| format!("${i}")).collect();
+                        sql.push_str(&format!("{target} IN ({})", marks.join(", ")));
+                    }
+                    continue;
+                }
                 Filter::Eq(c, v) => (c, "=", v),
                 Filter::NotEq(c, v) => (c, "<>", v),
                 Filter::Gte(c, v) => (c, ">=", v),
@@ -112,7 +149,11 @@ impl<M: Model> Relation<M> {
     }
 
     pub fn load(&self, ctx: &mut Ctx) -> Result<Vec<Handle<M>>> {
-        Ok(self.fetch(ctx)?.into_iter().map(|record| ctx.adopt(record)).collect())
+        let handles: Vec<Handle<M>> = self.fetch(ctx)?.into_iter().map(|record| ctx.adopt(record)).collect();
+        for association in &self.includes {
+            association.preload(ctx, &handles)?;
+        }
+        Ok(handles)
     }
 
     /// `first`: orders by id unless the relation has an order already.
@@ -146,14 +187,4 @@ impl<M: Model> Relation<M> {
     pub fn find_by_bang(&self, ctx: &mut Ctx, column: &str, value: impl Into<Value>) -> Result<Handle<M>> {
         self.find_by(ctx, column, value)?.ok_or(Error::RecordNotFound { model: M::NAME, conditions: None })
     }
-}
-
-/// Builds a record from a row, turning enum integers back into labels.
-pub(crate) fn from_row<M: Model>(row: &Row) -> Result<M> {
-    let mut record = M::default();
-    for (index, column) in row.columns().iter().enumerate() {
-        let value = M::behavior().from_database(column.name(), pg::read(row, index)?);
-        record.set(column.name(), value)?;
-    }
-    Ok(record)
 }

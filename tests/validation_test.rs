@@ -3,7 +3,7 @@ mod support;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use rustonrails::{Behavior, Check, Ctx, Handle, Model, Record, Result, Time, Value, model};
+use rustonrails::{Behavior, BelongsTo, Check, Ctx, Handle, Model, Record, Result, Time, Value, model};
 
 model! {
     pub struct Person in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
@@ -40,11 +40,13 @@ model! {
     pub struct Entry in "posts" { id: i64, user_id: i64, title: String, status: String = "draft" }
 }
 
+const ENTRY_USER: BelongsTo<Entry, Person> = BelongsTo::new("user", "user_id");
+
 impl Model for Entry {
     fn behavior() -> &'static Behavior<Self> {
         static BEHAVIOR: LazyLock<Behavior<Entry>> = LazyLock::new(|| {
             Behavior::<Entry>::new()
-                .belongs_to::<Person>("user", "user_id")
+                .belongs_to(&ENTRY_USER)
                 .enumeration("status", &[("draft", 0), ("published", 1)], true)
         });
         &BEHAVIOR

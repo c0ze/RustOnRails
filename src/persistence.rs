@@ -140,6 +140,7 @@ impl Ctx {
         slot.saved = Some(fresh.clone());
         slot.record = fresh;
         slot.errors.clear();
+        slot.associations.clear();
         Ok(())
     }
 
