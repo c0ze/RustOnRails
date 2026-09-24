@@ -14,6 +14,7 @@ mod pg;
 mod relation;
 mod validation;
 mod value;
+mod write;
 
 pub use behavior::{Behavior, Check, Cond, Event, Hook};
 pub use ctx::{Ctx, Handle};

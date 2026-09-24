@@ -1,0 +1,138 @@
+mod support;
+
+use std::sync::LazyLock;
+
+use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, model};
+
+model! {
+    pub struct Person in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
+}
+
+impl Model for Person {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Person>> = LazyLock::new(|| {
+            Behavior::<Person>::new()
+                .validates("name", Check::Presence)
+                .before_save(|ctx, p| log(ctx, p, "before_save"))
+                .before_create(|ctx, p| log(ctx, p, "before_create"))
+                .after_create(|ctx, p| log(ctx, p, "after_create"))
+                .after_save(|ctx, p| log(ctx, p, "after_save"))
+                .before_update(|ctx, p| log(ctx, p, "before_update"))
+                .after_update(|ctx, p| log(ctx, p, "after_update"))
+                .after_create(|ctx, p| if ctx[p].name.as_deref() == Some("explode") { Err(Error::Nil { what: "explode" }) } else { Ok(()) })
+                .before_save(|ctx, p| if ctx[p].name.as_deref() == Some("halt") { Err(Error::Abort) } else { Ok(()) })
+        });
+        &BEHAVIOR
+    }
+}
+
+model! {
+    pub struct Plain in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
+}
+
+impl Model for Plain {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Plain>> = LazyLock::new(Behavior::new);
+        &BEHAVIOR
+    }
+}
+
+/// Callbacks append to the email so tests can read the order they ran in.
+fn log(ctx: &mut Ctx, person: Handle<Person>, step: &str) -> Result<()> {
+    let email = ctx[person].email.get_or_insert_with(String::new);
+    email.push_str(step);
+    email.push(' ');
+    Ok(())
+}
+
+fn build(ctx: &mut Ctx, name: &str) -> Handle<Person> {
+    ctx.build(Person { name: Some(name.into()), ..Person::new_record() })
+}
+
+#[test]
+fn test_create_runs_callbacks_in_order_and_sets_timestamps() {
+    let mut ctx = support::ctx();
+    let person = build(&mut ctx, "Ann");
+    assert!(ctx.save(person).unwrap());
+    assert!(ctx.is_persisted(person));
+    assert!(ctx[person].id.is_some());
+    assert_eq!(Some("before_save before_create after_create after_save "), ctx[person].email.as_deref());
+    assert_eq!(ctx[person].created_at, ctx[person].updated_at);
+    assert!(ctx[person].created_at.is_some());
+}
+
+#[test]
+fn test_update_writes_only_changes_and_bumps_updated_at() {
+    let mut ctx = support::ctx();
+    let person = build(&mut ctx, "Ann");
+    ctx.save_bang(person).unwrap();
+    let created = ctx[person].updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    ctx[person].email = None;
+    assert!(ctx.update(person, |p| p.name = Some("Bea".into())).unwrap());
+    assert_eq!(Some("before_save before_update after_update after_save "), ctx[person].email.as_deref());
+    assert!(ctx[person].updated_at > created);
+    // Rails applies changes before the after callbacks, so their edits stay unsaved.
+    assert_eq!(vec!["email"], ctx.changed(person));
+    let id = ctx[person].id.unwrap();
+    let reloaded = Person::find(&mut ctx, id).unwrap();
+    assert_eq!(Some("Bea"), ctx[reloaded].name.as_deref());
+}
+
+#[test]
+fn test_save_without_changes_skips_the_update() {
+    let mut ctx = support::ctx();
+    let plain = Plain::create_bang(&mut ctx, Plain { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Plain::new_record() }).unwrap();
+    let stamp = ctx[plain].updated_at;
+    ctx.execute("UPDATE users SET name = 'from the database'", &[]).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    assert!(ctx.save(plain).unwrap());
+    assert_eq!(stamp, ctx[plain].updated_at);
+    let rows = ctx.query("SELECT name FROM users", &[]).unwrap();
+    assert_eq!("from the database", rows[0].get::<_, String>(0));
+}
+
+#[test]
+fn test_invalid_save_returns_false_and_bang_raises() {
+    let mut ctx = support::ctx();
+    let nameless = ctx.build(Person::new_record());
+    assert!(!ctx.save(nameless).unwrap());
+    assert!(ctx.is_new_record(nameless));
+    let error = ctx.save_bang(nameless).unwrap_err();
+    assert_eq!("Validation failed: Name can't be blank", error.to_string());
+    let created = Person::create(&mut ctx, Person::new_record()).unwrap();
+    assert!(ctx.is_new_record(created));
+    assert!(matches!(Person::create_bang(&mut ctx, Person::new_record()), Err(Error::RecordInvalid { .. })));
+}
+
+#[test]
+fn test_before_callback_abort_halts_the_save() {
+    let mut ctx = support::ctx();
+    let person = build(&mut ctx, "halt");
+    assert!(!ctx.save(person).unwrap());
+    assert!(ctx.is_new_record(person));
+    assert!(matches!(ctx.save_bang(person), Err(Error::RecordNotSaved { .. })));
+    assert_eq!(0, Person::all().count(&mut ctx).unwrap());
+}
+
+#[test]
+fn test_failed_after_create_rolls_back_and_leaves_record_new() {
+    let mut ctx = support::ctx();
+    // Plain has no logging callbacks, so its email can't collide with the next insert's.
+    Plain::create_bang(&mut ctx, Plain { name: Some("Kept".into()), email: Some("kept@example.com".into()), ..Plain::new_record() }).unwrap();
+    let person = build(&mut ctx, "explode");
+    assert!(matches!(ctx.save(person), Err(Error::Nil { .. })));
+    assert!(ctx.is_new_record(person));
+    assert_eq!(None, ctx[person].id);
+    assert_eq!(1, Person::all().count(&mut ctx).unwrap());
+}
+
+#[test]
+fn test_timestamps_survive_reload() {
+    let mut ctx = support::ctx();
+    let person = build(&mut ctx, "Ann");
+    ctx.save_bang(person).unwrap();
+    let id = ctx[person].id.unwrap();
+    let found = Person::find(&mut ctx, id).unwrap();
+    assert_eq!(ctx[person].created_at, ctx[found].created_at);
+}

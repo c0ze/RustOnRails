@@ -39,6 +39,20 @@ pub trait Model: Record {
     fn find_by_bang(ctx: &mut Ctx, column: &str, value: impl Into<Value>) -> Result<Handle<Self>> {
         Self::all().find_by_bang(ctx, column, value)
     }
+
+    /// `Post.create(attributes)`: returns the record even when it didn't save.
+    fn create(ctx: &mut Ctx, record: Self) -> Result<Handle<Self>> {
+        let handle = ctx.build(record);
+        ctx.save(handle)?;
+        Ok(handle)
+    }
+
+    /// `Post.create!(attributes)`
+    fn create_bang(ctx: &mut Ctx, record: Self) -> Result<Handle<Self>> {
+        let handle = ctx.build(record);
+        ctx.save_bang(handle)?;
+        Ok(handle)
+    }
 }
 
 /// Declares a model struct: one `Option` field per column, since any Ruby
