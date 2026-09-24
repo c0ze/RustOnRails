@@ -2,9 +2,12 @@
 //! examples/blog's models (../Rutile/examples/blog/app/models), written the
 //! way `rutile build` should generate them. Comments point at the Ruby.
 
+pub mod fixtures;
+
 use std::sync::LazyLock;
 
-use rustonrails::{Behavior, Model, Relation, Time, model};
+use regex::Regex;
+use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Relation, Result, Time, model, now};
 
 // application_record.rb:4  scope :created_since, ->(time) { where(created_at: time..) }
 pub trait ApplicationRecordScopes {
@@ -28,9 +31,26 @@ model! {
     }
 }
 
+/// URI::MailTo::EMAIL_REGEXP, verbatim.
+const EMAIL_REGEXP: &str = r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\z";
+
 impl Model for User {
     fn behavior() -> &'static Behavior<Self> {
-        static BEHAVIOR: LazyLock<Behavior<User>> = LazyLock::new(Behavior::new);
+        static BEHAVIOR: LazyLock<Behavior<User>> = LazyLock::new(|| {
+            Behavior::<User>::new()
+                // user.rb:5  before_validation { self.email = email.to_s.strip.downcase }
+                .before_validation(|ctx, user| {
+                    let email = ctx[user].email.clone().unwrap_or_default();
+                    ctx[user].email = Some(email.trim().to_lowercase());
+                    Ok(())
+                })
+                // user.rb:7
+                .validates("name", Check::Presence)
+                // user.rb:8
+                .validates("email", Check::Presence)
+                .validates("email", Check::Uniqueness)
+                .validates("email", Check::Format(Regex::new(EMAIL_REGEXP).expect("EMAIL_REGEXP compiles")))
+        });
         &BEHAVIOR
     }
 }
@@ -59,12 +79,32 @@ impl Post {
     pub fn is_draft(&self) -> bool {
         self.status.as_deref() == Some("draft")
     }
+
+    // post.rb:16
+    fn stamp_published_at(ctx: &mut Ctx, post: Handle<Post>) -> Result<()> {
+        let post = &mut ctx[post];
+        if post.published_at.is_none() {
+            post.published_at = Some(now());
+        }
+        Ok(())
+    }
 }
 
 impl Model for Post {
     fn behavior() -> &'static Behavior<Self> {
-        static BEHAVIOR: LazyLock<Behavior<Post>> =
-            LazyLock::new(|| Behavior::new().enumeration("status", &[("draft", 0), ("published", 1)], true));
+        static BEHAVIOR: LazyLock<Behavior<Post>> = LazyLock::new(|| {
+            Behavior::<Post>::new()
+                // post.rb:2
+                .belongs_to::<User>("user", "user_id")
+                // post.rb:5
+                .enumeration("status", &[("draft", 0), ("published", 1)], true)
+                // post.rb:7
+                .validates("title", Check::Presence)
+                .validates("title", Check::Length { minimum: None, maximum: Some(200) })
+                // post.rb:12
+                .before_save(Post::stamp_published_at)
+                .when(|ctx, post| ctx[post].is_published())
+        });
         &BEHAVIOR
     }
 }
@@ -98,9 +138,47 @@ model! {
     }
 }
 
+impl Comment {
+    /// `comment.post` (belongs_to :post). Not cached yet; see docs/design.md.
+    pub fn post(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<Option<Handle<Post>>> {
+        match ctx[comment].post_id {
+            Some(id) => Post::find_by(ctx, "id", id),
+            None => Ok(None),
+        }
+    }
+
+    // comment.rb:12
+    fn post_is_published(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<()> {
+        if let Some(post) = Comment::post(ctx, comment)? {
+            if ctx[post].is_draft() {
+                ctx.errors_mut(comment).add("post", "must be published");
+            }
+        }
+        Ok(())
+    }
+
+    // comment.rb:16  post.increment!(:comments_count)
+    fn bump_post_counter(ctx: &mut Ctx, comment: Handle<Comment>) -> Result<()> {
+        let post = Comment::post(ctx, comment)?.ok_or(Error::Nil { what: "increment!" })?;
+        ctx.increment_bang(post, "comments_count", 1)
+    }
+}
+
 impl Model for Comment {
     fn behavior() -> &'static Behavior<Self> {
-        static BEHAVIOR: LazyLock<Behavior<Comment>> = LazyLock::new(Behavior::new);
+        static BEHAVIOR: LazyLock<Behavior<Comment>> = LazyLock::new(|| {
+            Behavior::<Comment>::new()
+                // comment.rb:2-3
+                .belongs_to::<Post>("post", "post_id")
+                .belongs_to::<User>("user", "user_id")
+                // comment.rb:5
+                .validates("body", Check::Presence)
+                .validates("body", Check::Length { minimum: None, maximum: Some(2000) })
+                // comment.rb:6
+                .validate(Comment::post_is_published)
+                // comment.rb:8
+                .after_create(Comment::bump_post_counter)
+        });
         &BEHAVIOR
     }
 }

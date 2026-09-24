@@ -62,7 +62,7 @@ rustonrails::model! {
 impl Model for Post {
     fn behavior() -> &'static Behavior<Self> {
         static BEHAVIOR: LazyLock<Behavior<Post>> = LazyLock::new(|| {
-            Behavior::new()
+            Behavior::<Post>::new()
                 .belongs_to::<User>("user", "user_id")
                 .enumeration("status", &[("draft", 0), ("published", 1)], true)
                 .validates("title", Check::Presence)
@@ -73,7 +73,19 @@ impl Model for Post {
 }
 ```
 
+A behavior names its model up front (`Behavior::<Post>::new()`), because closures passed to the builder can't infer it otherwise.
+
 Enum attributes hold the label (`"draft"`), and the record layer maps labels to integers going into and out of the database, so an unknown label stays in memory for the inclusion validator to reject, as in Rails. Scopes are extension traits on `Relation<M>`, so `Post.visible.recent` reads `Post::all().visible().recent()`. Class-level methods (`find`, `find_by`, `create!` as `create_bang`) are defaults on the `Model` trait; instance-level ones (`save`, `valid?` as `is_valid`, `update`, `destroy`, `reload`, `increment!`) are methods on `Ctx` that take a handle.
+
+The port of `examples/blog`'s models in `tests/blog/` is the reference for what `rutile build` should emit, and `tests/blog_models_test.rs` runs the blog's model tests against it:
+
+```rust
+let post = Post::find(ctx, id)?;                                  // Post.find(id)
+ctx.update_bang(post, |p| p.status = Some("published".into()))?; // post.update!(status: :published)
+let posts = Post::all().visible().recent().load(ctx)?;            // Post.visible.recent
+```
+
+One rule for generated code: an argument that reads the `Ctx` has to be evaluated into a local before a call that borrows the `Ctx` mutably. `Post::find(ctx, ctx[comment].post_id)` doesn't compile; `let id = ctx[comment].post_id; Post::find(ctx, id)` does.
 
 ## Planned modules
 
