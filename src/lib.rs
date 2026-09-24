@@ -10,6 +10,7 @@ mod ctx;
 mod error;
 mod model;
 mod pg;
+mod relation;
 mod validation;
 mod value;
 
@@ -17,5 +18,6 @@ pub use behavior::{Behavior, Check, Cond, Event, Hook};
 pub use ctx::{Ctx, Handle};
 pub use error::{Error, Result};
 pub use model::{Model, Record};
+pub use relation::Relation;
 pub use validation::Errors;
 pub use value::{FromValue, Time, Value, now};

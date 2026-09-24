@@ -1,4 +1,4 @@
-use crate::{Behavior, Result, Value};
+use crate::{Behavior, Ctx, Handle, Relation, Result, Value};
 
 /// Column-level plumbing for a model struct. `model!` implements it.
 pub trait Record: Clone + Default + PartialEq + Send + 'static {
@@ -20,9 +20,25 @@ pub trait Record: Clone + Default + PartialEq + Send + 'static {
 }
 
 /// A record plus its class-level declarations. Class methods such as
-/// `Post.find` are default methods here (Task 3).
+/// `Post.find` are default methods here.
 pub trait Model: Record {
     fn behavior() -> &'static Behavior<Self>;
+
+    fn all() -> Relation<Self> {
+        Relation::new()
+    }
+
+    fn find(ctx: &mut Ctx, id: i64) -> Result<Handle<Self>> {
+        Self::all().find(ctx, id)
+    }
+
+    fn find_by(ctx: &mut Ctx, column: &str, value: impl Into<Value>) -> Result<Option<Handle<Self>>> {
+        Self::all().find_by(ctx, column, value)
+    }
+
+    fn find_by_bang(ctx: &mut Ctx, column: &str, value: impl Into<Value>) -> Result<Handle<Self>> {
+        Self::all().find_by_bang(ctx, column, value)
+    }
 }
 
 /// Declares a model struct: one `Option` field per column, since any Ruby
