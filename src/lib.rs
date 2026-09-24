@@ -5,11 +5,17 @@
 //! owns the database connection and every record one unit of work touches,
 //! and code refers to records through `Handle`s. See `docs/design.md`.
 
+mod behavior;
 mod ctx;
 mod error;
+mod model;
 mod pg;
+mod validation;
 mod value;
 
-pub use ctx::Ctx;
+pub use behavior::{Behavior, Check, Cond, Event, Hook};
+pub use ctx::{Ctx, Handle};
 pub use error::{Error, Result};
+pub use model::{Model, Record};
+pub use validation::Errors;
 pub use value::{FromValue, Time, Value, now};
