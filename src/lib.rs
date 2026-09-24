@@ -8,6 +8,7 @@
 mod behavior;
 mod cast;
 mod ctx;
+mod enums;
 mod error;
 mod model;
 mod persistence;

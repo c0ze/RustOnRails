@@ -1,5 +1,6 @@
 use regex::Regex;
 
+use crate::enums::EnumDef;
 use crate::{Ctx, Handle, Record, Result, Value};
 
 /// A callback or a custom validation, like `before_save :stamp_published_at`.
@@ -54,11 +55,6 @@ impl<T, M> Guarded<T, M> {
     }
 }
 
-struct EnumDef {
-    attribute: &'static str,
-    mapping: Vec<(&'static str, i64)>,
-}
-
 enum Last {
     Validation,
     Callback,
@@ -67,7 +63,7 @@ enum Last {
 /// A model's class-level declarations, in source order, because order is
 /// behavior: validations and callbacks run in the order they were declared.
 pub struct Behavior<M> {
-    enums: Vec<EnumDef>,
+    pub(crate) enums: Vec<EnumDef>,
     pub(crate) validations: Vec<Guarded<Validation<M>, M>>,
     pub(crate) callbacks: Vec<Guarded<(Event, Hook<M>), M>>,
     last: Option<Last>,
@@ -147,31 +143,6 @@ impl<M> Behavior<M> {
             Some(Last::Callback) => GuardRef::from(self.callbacks.last_mut().expect("declared")),
             None => panic!("`when`/`unless` need a validation or callback before them"),
         }
-    }
-
-    /// Enum labels become their integers and numeric strings pass through as
-    /// integers; an unknown label becomes nil, as Rails' enum type
-    /// serializes it.
-    pub(crate) fn to_database(&self, attribute: &str, value: Value) -> Value {
-        match (self.enum_for(attribute), &value) {
-            (Some(def), Value::Str(label)) => match def.mapping.iter().find(|(l, _)| l == label) {
-                Some((_, i)) => Value::Int(*i),
-                None => label.trim().parse().map_or(Value::Nil, Value::Int),
-            },
-            _ => value,
-        }
-    }
-
-    /// Enum integers become their labels; an unknown integer becomes nil.
-    pub(crate) fn from_database(&self, attribute: &str, value: Value) -> Value {
-        match (self.enum_for(attribute), &value) {
-            (Some(def), Value::Int(i)) => def.mapping.iter().find(|(_, n)| n == i).map_or(Value::Nil, |(l, _)| Value::from(*l)),
-            _ => value,
-        }
-    }
-
-    fn enum_for(&self, attribute: &str) -> Option<&EnumDef> {
-        self.enums.iter().find(|e| e.attribute == attribute)
     }
 }
 

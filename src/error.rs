@@ -22,6 +22,8 @@ pub enum Error {
     /// A value an attribute's type can't hold.
     Cast { expected: &'static str, value: Value },
     UnknownAttribute { model: &'static str, name: String },
+    /// Writing an enum label the enum doesn't define (Rails' ArgumentError).
+    InvalidEnum { attribute: &'static str, value: String },
     /// Writing a record that was never saved, like `increment!` on a new one.
     NotPersisted { model: &'static str },
     /// Anything the database reported.
@@ -40,6 +42,7 @@ impl fmt::Display for Error {
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}"),
+            Error::InvalidEnum { attribute, value } => write!(f, "'{value}' is not a valid {attribute}"),
             Error::NotPersisted { model } => write!(f, "cannot update a new {model}"),
             Error::Db(e) => match e.as_db_error() {
                 Some(db) => write!(f, "{}: {}", db.severity(), db.message()),

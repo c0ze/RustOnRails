@@ -37,6 +37,22 @@ impl Model for Plain {
     }
 }
 
+// An enum without `validate: true`: Rails raises on an unknown label.
+model! {
+    pub struct Loose in "posts" {
+        id: i64, user_id: i64, title: String, body: String, status: String = "draft", published_at: Time,
+        comments_count: i64 = 0, created_at: Time, updated_at: Time,
+    }
+}
+
+impl Model for Loose {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Loose>> =
+            LazyLock::new(|| Behavior::<Loose>::new().enumeration("status", &[("draft", 0), ("published", 1)], false));
+        &BEHAVIOR
+    }
+}
+
 /// Callbacks append to the email so tests can read the order they ran in.
 fn log(ctx: &mut Ctx, person: Handle<Person>, step: &str) -> Result<()> {
     let email = ctx[person].email.get_or_insert_with(String::new);
@@ -135,4 +151,14 @@ fn test_timestamps_survive_reload() {
     let id = ctx[person].id.unwrap();
     let found = Person::find(&mut ctx, id).unwrap();
     assert_eq!(ctx[person].created_at, ctx[found].created_at);
+}
+
+#[test]
+fn test_unknown_enum_label_raises_on_write() {
+    let mut ctx = support::ctx();
+    let owner = Plain::create_bang(&mut ctx, Plain { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Plain::new_record() }).unwrap();
+    let user_id = ctx[owner].id;
+    let error = Loose::create(&mut ctx, Loose { user_id, title: Some("t".into()), status: Some("archived".into()), ..Loose::new_record() }).unwrap_err();
+    assert!(matches!(error, Error::InvalidEnum { .. }), "{error:?}");
+    assert_eq!("'archived' is not a valid status", error.to_string());
 }

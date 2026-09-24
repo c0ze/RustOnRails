@@ -12,10 +12,14 @@ pub(crate) fn fill_timestamps<M: Record>(record: &mut M, time: Time) -> Result<(
     Ok(())
 }
 
+fn database_values<M: Model>(record: &M, columns: &[&str]) -> Result<Vec<Value>> {
+    columns.iter().map(|c| M::behavior().to_database_for_write(c, record.get(c))).collect()
+}
+
 /// One INSERT of every column (id only when set); returns the new id.
 pub(crate) fn insert_row<M: Model>(ctx: &mut Ctx, record: &M) -> Result<Value> {
     let columns: Vec<&str> = M::COLUMNS.iter().copied().filter(|c| *c != "id" || !record.get("id").is_nil()).collect();
-    let params: Vec<Value> = columns.iter().map(|c| M::behavior().to_database(c, record.get(c))).collect();
+    let params = database_values(record, &columns)?;
     let names: Vec<String> = columns.iter().map(|c| quote(c)).collect();
     let placeholders: Vec<String> = (1..=params.len()).map(|i| format!("${i}")).collect();
     let sql = format!(
@@ -31,7 +35,7 @@ pub(crate) fn insert_row<M: Model>(ctx: &mut Ctx, record: &M) -> Result<Value> {
 
 /// One UPDATE of the given columns for the row with this id.
 pub(crate) fn update_row<M: Model>(ctx: &mut Ctx, id: i64, record: &M, columns: &[&str]) -> Result<()> {
-    let mut params: Vec<Value> = columns.iter().map(|c| M::behavior().to_database(c, record.get(c))).collect();
+    let mut params = database_values(record, columns)?;
     let sets: Vec<String> = columns.iter().enumerate().map(|(i, c)| format!("{} = ${}", quote(c), i + 1)).collect();
     params.push(Value::Int(id));
     let sql = format!("UPDATE {} SET {} WHERE {} = ${}", quote(M::TABLE), sets.join(", "), quote("id"), params.len());
