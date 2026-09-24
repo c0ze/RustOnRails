@@ -78,7 +78,7 @@ A behavior names its model up front (`Behavior::<Post>::new()`), because closure
 
 Enum attributes hold the label (`"draft"`), and the record layer maps labels to integers going into and out of the database, so an unknown label stays in memory for the inclusion validator to reject, as in Rails. Scopes are extension traits on `Relation<M>`, so `Post.visible.recent` reads `Post::all().visible().recent()`. Class-level methods (`find`, `find_by`, `create!` as `create_bang`) are defaults on the `Model` trait; instance-level ones (`save`, `valid?` as `is_valid`, `update`, `destroy`, `reload`, `increment!`) are methods on `Ctx` that take a handle.
 
-The port of `examples/blog`'s models in `tests/blog/` is the reference for what `rutile build` should emit, and `tests/blog_models_test.rs` runs the blog's model tests against it:
+The port of the blog's models in `examples/blog/src/models/` is the reference for what `rutile build` should emit, and `examples/blog/tests/blog_models_test.rs` runs the blog's model tests against it:
 
 ```rust
 let post = Post::find(ctx, id)?;                                  // Post.find(id)
@@ -106,7 +106,9 @@ let comment = Post::COMMENTS.build(ctx, post, Comment::from_attributes(&attribut
 
 A controller is a `Default` struct whose fields are its instance variables. `Controller::before` is the `before_action` chain written out as a match on the action name, `rescue` is `rescue_from`, and `wrap_parameters` gives the wrapper key and attribute names. Routes are built in `routes.rb` order with `action::<Controller>("show", Controller::show)`, and a constraint that fails falls through to the next route. An error nobody rescues becomes Rails' default status and the exceptions app's `{"status":404,"error":"Not Found"}`.
 
-The server runs tiny_http with a fixed pool of worker threads, each owning one Postgres connection and building a fresh `Ctx` per request; a panicking handler costs a 500 and that worker's connection, not the process.
+The server runs tiny_http with a fixed pool of worker threads, each owning one Postgres connection and building a fresh `Ctx` per request; a panicking handler costs a 500 and that worker's connection, not the process. The listening socket has `TCP_NODELAY` set. tiny_http writes headers and body separately, and with Nagle's algorithm on, every multi-segment response waited about 40 ms for the client's delayed ACK.
+
+`examples/blog` is the whole blog app ported by hand in the shape codegen will produce: models, controllers and `routes.rs` in the manifest's route order, one file per Ruby file. Rutile's `rake example:verify` runs the Rails app's integration tests against it, and `rake example:benchmark` compares it with Puma using `tools/loadgen`, a small keep-alive load generator in this workspace.
 
 ## Planned modules
 
@@ -144,5 +146,4 @@ Generated code returns `Result<_, rustonrails::Error>`. `RecordNotFound` maps to
 
 - How `Value` and typed code exchange records: handles inside `Value`, probably.
 - Transactions and the record table: a failed save restores the record's saved state and id, but Rails also restores `new_record?` and attribute changes in more cases (rollback after a later statement in the same transaction). Revisit when transactions are exposed to app code.
-- Association caching: `comment.post` loads the post on every call; Rails caches it on the owner. Matters only when code mutates the loaded object and reads it through the association again.
 - Enums without `validate: true`: Rails raises on an unknown label at assignment; the struct field can't, so the check has to move to save.
