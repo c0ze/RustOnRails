@@ -175,9 +175,13 @@ impl<M: Model> Relation<M> {
         Ok(!self.clone().limit(1).fetch(ctx)?.is_empty())
     }
 
-    pub fn find(&self, ctx: &mut Ctx, id: i64) -> Result<Handle<M>> {
-        let found = self.clone().where_eq("id", id).limit(1).load(ctx)?.into_iter().next();
-        found.ok_or_else(|| Error::RecordNotFound { model: M::NAME, conditions: Some(format!("'id'={id}")) })
+    /// `find(id)`: the id is cast like any query value, so a param string
+    /// works and one that isn't a number finds nothing.
+    pub fn find(&self, ctx: &mut Ctx, id: impl Into<Value>) -> Result<Handle<M>> {
+        let id = id.into();
+        let found = self.clone().where_eq("id", id.clone()).limit(1).load(ctx)?.into_iter().next();
+        let conditions = Some(format!("'id'={}", id.to_ruby_string()));
+        found.ok_or(Error::RecordNotFound { model: M::NAME, conditions })
     }
 
     pub fn find_by(&self, ctx: &mut Ctx, column: &str, value: impl Into<Value>) -> Result<Option<Handle<M>>> {

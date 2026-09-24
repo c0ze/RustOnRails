@@ -30,7 +30,7 @@ pub trait Model: Record {
         Relation::new()
     }
 
-    fn find(ctx: &mut Ctx, id: i64) -> Result<Handle<Self>> {
+    fn find(ctx: &mut Ctx, id: impl Into<Value>) -> Result<Handle<Self>> {
         Self::all().find(ctx, id)
     }
 
