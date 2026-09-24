@@ -41,12 +41,22 @@ impl fmt::Display for Error {
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}"),
             Error::NotPersisted { model } => write!(f, "cannot update a new {model}"),
-            Error::Db(e) => write!(f, "{e}"),
+            Error::Db(e) => match e.as_db_error() {
+                Some(db) => write!(f, "{}: {}", db.severity(), db.message()),
+                None => write!(f, "{e}"),
+            },
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Db(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 impl From<postgres::Error> for Error {
     fn from(e: postgres::Error) -> Self {

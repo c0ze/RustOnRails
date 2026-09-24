@@ -50,3 +50,11 @@ fn test_database_errors_surface() {
     let result = ctx.execute("INSERT INTO users (name) VALUES ($1)", &[Value::from("no email")]);
     assert!(matches!(result, Err(Error::Db(_))));
 }
+
+#[test]
+fn test_database_errors_keep_the_postgres_message() {
+    let mut ctx = support::ctx();
+    let error = ctx.execute("INSERT INTO users (name) VALUES ($1)", &[Value::from("no email")]).unwrap_err();
+    assert!(error.to_string().contains("null value in column \"email\""), "{error}");
+    assert!(std::error::Error::source(&error).is_some());
+}
