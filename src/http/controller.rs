@@ -44,7 +44,11 @@ fn dispatch<C: Controller>(name: &'static str, run: Action<C>, req: &mut Request
         Err(error) => controller.rescue(req, error),
         done => done,
     };
-    outcome.unwrap_or_else(|error| error_response(&error))
+    outcome.unwrap_or_else(|error| {
+        // Rails logs every exception it turns into an error page.
+        eprintln!("{} {} failed: {error}", req.method, req.path);
+        error_response(&error)
+    })
 }
 
 /// What Rails does with an exception nobody rescued: the status from

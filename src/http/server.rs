@@ -126,7 +126,10 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
                 client = kept.filter(|c| !c.is_closed());
                 response
             }
-            Err(_) => error_page(500),
+            Err(error) => {
+                eprintln!("database connection failed: {error}");
+                error_page(500)
+            }
         };
         incoming.respond(to_tiny(response)).ok();
     }
