@@ -1,18 +1,29 @@
-use std::io::Read;
-use std::net::SocketAddr;
+use std::io::{self, BufReader, Read};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use postgres::{Client, NoTls};
-use serde_json::Value as Json;
 
+use super::wire::{self, WireError};
 use super::{Request, Response, Router, error_page};
 use crate::Ctx;
 
 /// The largest request body accepted; bigger ones get a 413.
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+
+/// How long a connection may sit idle between requests, or stall in the
+/// middle of one, before it's closed: Puma's `persistent_timeout`.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// After refusing a request, how long to keep reading what the client is
+/// still sending, and how much of it, before closing.
+const LINGER: Duration = Duration::from_secs(1);
+const LINGER_BYTES: u64 = 1024 * 1024;
 
 /// Where to listen, which database to use, and how many worker threads to
 /// run: Puma's threads, each with its own connection.
@@ -24,32 +35,35 @@ pub struct Config {
 
 pub struct Running {
     pub address: SocketAddr,
-    server: Arc<tiny_http::Server>,
+    stopping: Arc<AtomicBool>,
     jobs: Sender<Job>,
     intake: JoinHandle<()>,
     workers: Vec<JoinHandle<()>>,
 }
 
-/// A request whose body has been read in full, or a signal to stop.
+/// A request read in full.
+struct Incoming {
+    method: String,
+    target: String,
+    content_type: Option<String>,
+    body: Vec<u8>,
+}
+
+/// A request and where its response goes, or a signal to stop.
 enum Job {
-    Serve(tiny_http::Request, String),
+    Serve(Incoming, Sender<Response>),
     Stop,
 }
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Starts listening and returns once the workers are running. One intake
-/// thread accepts connections and reads each body on its own short-lived
-/// thread, so a client that stalls mid-upload holds that thread, never a
-/// database worker; workers only see requests that are fully read.
+/// Starts listening and returns once the workers are running. Each
+/// connection gets a thread that reads requests off it in full, so a client
+/// that stalls mid-upload holds that thread, never a database worker;
+/// workers only see requests that are fully read.
 pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
-    // Accepted sockets inherit TCP_NODELAY from the listener. tiny_http
-    // writes headers and body separately, and without it the body waits for
-    // the client's delayed ACK: about 40 ms on every multi-segment response.
-    let listener = std::net::TcpListener::bind(config.address.as_str())?;
-    socket2::SockRef::from(&listener).set_tcp_nodelay(true)?;
-    let server = Arc::new(tiny_http::Server::from_listener(listener, None)?);
-    let address = server.server_addr().to_ip().ok_or("server has no IP address")?;
+    let listener = TcpListener::bind(config.address.as_str())?;
+    let address = listener.local_addr()?;
     let (jobs, queue) = channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));
     let router = Arc::new(router);
@@ -59,11 +73,12 @@ pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
             std::thread::spawn(move || work(&queue, &router, &url))
         })
         .collect();
+    let stopping = Arc::new(AtomicBool::new(false));
     let intake = {
-        let (server, jobs) = (server.clone(), jobs.clone());
-        std::thread::spawn(move || accept(&server, &jobs))
+        let (stopping, jobs) = (stopping.clone(), jobs.clone());
+        std::thread::spawn(move || accept(&listener, &jobs, &stopping))
     };
-    Ok(Running { address, server, jobs, intake, workers })
+    Ok(Running { address, stopping, jobs, intake, workers })
 }
 
 impl Running {
@@ -76,9 +91,12 @@ impl Running {
     }
 
     /// Stops accepting, lets each worker finish its current request, then
-    /// returns. Reader threads stuck on stalled clients are left behind.
+    /// returns. Connection threads end on their own when their client goes
+    /// quiet.
     pub fn stop(self) {
-        self.server.unblock();
+        self.stopping.store(true, Ordering::SeqCst);
+        // `accept` only looks at the flag when a connection arrives.
+        TcpStream::connect(self.address).ok();
         for _ in &self.workers {
             self.jobs.send(Job::Stop).ok();
         }
@@ -86,39 +104,77 @@ impl Running {
     }
 }
 
-fn accept(server: &tiny_http::Server, jobs: &Sender<Job>) {
-    while let Ok(mut incoming) = server.recv() {
-        let jobs = jobs.clone();
-        std::thread::spawn(move || match read_body(&mut incoming) {
-            Ok(body) => {
-                jobs.send(Job::Serve(incoming, body)).ok();
+fn accept(listener: &TcpListener, jobs: &Sender<Job>, stopping: &AtomicBool) {
+    for stream in listener.incoming() {
+        if stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        match stream {
+            Ok(stream) => {
+                let jobs = jobs.clone();
+                std::thread::spawn(move || serve(stream, &jobs));
             }
-            Err(status) => {
-                incoming.respond(to_tiny(error_page(status))).ok();
-            }
-        });
+            // Most likely out of file descriptors; don't spin on it.
+            Err(_) => std::thread::sleep(Duration::from_millis(10)),
+        }
     }
 }
 
-/// The whole body, or the status to refuse it with.
-fn read_body(incoming: &mut tiny_http::Request) -> Result<String, u16> {
-    if incoming.body_length().is_some_and(|length| length > MAX_BODY_BYTES) {
-        return Err(413);
+/// Reads requests off one connection and writes their responses in order,
+/// until the client closes it, goes quiet, or asks to close.
+fn serve(stream: TcpStream, jobs: &Sender<Job>) {
+    // Each response goes out in one write, and TCP_NODELAY sends it now
+    // rather than holding its last segment for the client's delayed ACK.
+    let ready = stream
+        .set_nodelay(true)
+        .and_then(|_| stream.set_read_timeout(Some(IDLE_TIMEOUT)))
+        .and_then(|_| stream.set_write_timeout(Some(IDLE_TIMEOUT)));
+    let (Ok(()), Ok(read_half)) = (ready, stream.try_clone()) else { return };
+    let mut reader = BufReader::new(read_half);
+    let mut writer = stream;
+    loop {
+        let request = wire::read_head(&mut reader).and_then(|head| {
+            let body = wire::read_body(&head, &mut reader, &mut writer, MAX_BODY_BYTES)?;
+            Ok((head, body))
+        });
+        let (head, body) = match request {
+            Ok(request) => request,
+            Err(WireError::Refuse(status)) => return refuse(&mut reader, &mut writer, status),
+            Err(WireError::Gone) => return,
+        };
+        let close = !head.keep_alive();
+        let head_only = head.method == "HEAD";
+        let content_type = head.header("Content-Type").map(str::to_string);
+        let incoming = Incoming { method: head.method, target: head.target, content_type, body };
+        let (reply, response) = channel();
+        if jobs.send(Job::Serve(incoming, reply)).is_err() {
+            return;
+        }
+        let Ok(response) = response.recv() else { return };
+        if wire::write_response(&mut writer, &response, head_only, close).is_err() || close {
+            return;
+        }
     }
-    let mut body = Vec::new();
-    let limit = MAX_BODY_BYTES as u64 + 1;
-    incoming.as_reader().take(limit).read_to_end(&mut body).map_err(|_| 400u16)?;
-    if body.len() > MAX_BODY_BYTES {
-        return Err(413);
+}
+
+/// Answers with an error page and closes. Closing a socket with request
+/// bytes still unread makes the kernel send a reset, which can destroy the
+/// response before the client reads it, so read and discard for a moment
+/// first.
+fn refuse(reader: &mut impl Read, writer: &mut TcpStream, status: u16) {
+    if wire::write_response(writer, &error_page(status), false, true).is_err() {
+        return;
     }
-    String::from_utf8(body).map_err(|_| 400u16)
+    writer.shutdown(Shutdown::Write).ok();
+    writer.set_read_timeout(Some(LINGER)).ok();
+    io::copy(&mut reader.take(LINGER_BYTES), &mut io::sink()).ok();
 }
 
 fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
     let mut client: Option<Client> = None;
     loop {
         let job = queue.lock().map(|queue| queue.recv());
-        let Ok(Ok(Job::Serve(incoming, body))) = job else { return };
+        let Ok(Ok(Job::Serve(incoming, reply))) = job else { return };
         // A connection the database closed (restart, failover, idle kill)
         // is replaced rather than reused.
         let connection = match client.take().filter(|c| !c.is_closed()) {
@@ -127,7 +183,7 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
         };
         let response = match connection {
             Ok(connection) => {
-                let (response, kept) = handle(router, connection, &incoming, body);
+                let (response, kept) = handle(router, connection, &incoming);
                 client = kept.filter(|c| !c.is_closed());
                 response
             }
@@ -136,41 +192,22 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
                 error_page(500)
             }
         };
-        incoming.respond(to_tiny(response)).ok();
+        reply.send(response).ok();
     }
 }
 
 /// Runs one request in a fresh `Ctx`. A panic becomes a 500 and costs the
 /// connection, since the panic may have left it mid-transaction.
-fn handle(router: &Router, client: Client, incoming: &tiny_http::Request, body: String) -> (Response, Option<Client>) {
-    let mut req = build_request(Ctx::new(client), incoming, &body);
+fn handle(router: &Router, client: Client, incoming: &Incoming) -> (Response, Option<Client>) {
+    let mut req = build_request(Ctx::new(client), incoming);
     match catch_unwind(AssertUnwindSafe(|| router.call(&mut req))) {
         Ok(response) => (response, Some(req.ctx.into_client())),
         Err(_) => (error_page(500), None),
     }
 }
 
-fn build_request(ctx: Ctx, incoming: &tiny_http::Request, body: &str) -> Request {
-    let url = incoming.url().to_string();
-    let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-    let content_type = incoming
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Content-Type"))
-        .map(|h| h.value.as_str().to_string());
-    let mut req = Request::new(ctx, incoming.method().as_str(), path).with_query(query);
-    if content_type.as_deref().is_some_and(|t| t.starts_with("application/json")) {
-        req = req.with_json(serde_json::from_str(body).unwrap_or(Json::Null));
-    }
-    req.content_type = content_type;
-    req
-}
-
-fn to_tiny(response: Response) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
-    let mut tiny = tiny_http::Response::from_data(response.body).with_status_code(response.status);
-    if let Some(content_type) = response.content_type {
-        let header = tiny_http::Header::from_bytes("Content-Type", content_type).expect("valid header");
-        tiny = tiny.with_header(header);
-    }
-    tiny
+fn build_request(ctx: Ctx, incoming: &Incoming) -> Request {
+    let target = incoming.target.as_str();
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    Request::new(ctx, &incoming.method, path).with_query(query).with_body(incoming.content_type.as_deref(), &incoming.body)
 }

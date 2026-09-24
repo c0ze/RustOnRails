@@ -12,8 +12,14 @@ pub struct Request {
     pub query: Map<String, Json>,
     pub body: Map<String, Json>,
     pub params: Params,
+    /// The body claimed to be JSON and didn't parse. Rails answers 400 once
+    /// a route matches, before the action runs.
+    pub malformed_body: bool,
     pub ctx: Ctx,
 }
+
+/// The media types Rails parses as JSON (`Mime[:json]` and its synonyms).
+const JSON_TYPES: [&str; 3] = ["application/json", "text/x-json", "application/jsonrequest"];
 
 impl Request {
     pub fn new(ctx: Ctx, method: &str, path: &str) -> Self {
@@ -24,6 +30,7 @@ impl Request {
             query: Map::new(),
             body: Map::new(),
             params: Params::default(),
+            malformed_body: false,
             ctx,
         }
     }
@@ -46,7 +53,34 @@ impl Request {
         self
     }
 
+    /// A request body as Rails' parameter parsers read it: JSON for the JSON
+    /// media types, form fields for `application/x-www-form-urlencoded`, and
+    /// nothing for anything else, or for an empty body.
+    pub fn with_body(mut self, content_type: Option<&str>, body: &[u8]) -> Self {
+        self.content_type = content_type.map(str::to_string);
+        if body.is_empty() {
+            return self;
+        }
+        if self.is_json() {
+            match serde_json::from_slice(body) {
+                Ok(json) => self = self.with_json(json),
+                Err(_) => self.malformed_body = true,
+            }
+        } else if self.media_type().as_deref() == Some("application/x-www-form-urlencoded") {
+            self.body = parse_query(&String::from_utf8_lossy(body));
+            self.params = Params::new(self.body.clone(), self.query.clone());
+        }
+        self.content_type = content_type.map(str::to_string);
+        self
+    }
+
+    /// `Content-Type` without its parameters, lowercased.
+    pub fn media_type(&self) -> Option<String> {
+        let content_type = self.content_type.as_deref()?;
+        Some(content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+    }
+
     pub fn is_json(&self) -> bool {
-        self.content_type.as_deref().is_some_and(|t| t.starts_with("application/json"))
+        self.media_type().is_some_and(|t| JSON_TYPES.contains(&t.as_str()))
     }
 }

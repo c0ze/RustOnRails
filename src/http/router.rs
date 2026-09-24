@@ -45,11 +45,25 @@ impl Router {
     }
 
     /// Runs the first route whose method, path and constraints all match.
-    /// Like Rails, a failed constraint moves on to the next route; no match
-    /// is a 404 page.
+    /// Like Rails, a failed constraint moves on to the next route, and a
+    /// HEAD request with no HEAD route of its own runs the matching GET
+    /// route (the server leaves out the body). No match is a 404 page.
     pub fn call(&self, req: &mut Request) -> Response {
+        let method = req.method.clone();
+        if let Some(response) = self.dispatch(req, &method) {
+            return response;
+        }
+        if method == "HEAD" {
+            if let Some(response) = self.dispatch(req, "GET") {
+                return response;
+            }
+        }
+        error_page(404)
+    }
+
+    fn dispatch(&self, req: &mut Request, method: &str) -> Option<Response> {
         for route in &self.routes {
-            if route.method != req.method {
+            if route.method != method {
                 continue;
             }
             let Some(captures) = route.pattern.captures(&req.path) else { continue };
@@ -67,9 +81,12 @@ impl Router {
                 req.params = before;
                 continue;
             }
-            return (route.handler)(req);
+            if req.malformed_body {
+                return Some(error_page(400));
+            }
+            return Some((route.handler)(req));
         }
-        error_page(404)
+        None
     }
 }
 

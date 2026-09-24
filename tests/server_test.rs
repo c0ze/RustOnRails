@@ -148,3 +148,136 @@ fn test_multi_segment_responses_are_not_held_back_by_nagle() {
     assert!(elapsed < std::time::Duration::from_millis(150), "10 requests took {elapsed:?}");
     running.stop();
 }
+
+/// Writes raw bytes, optionally half-closes, and returns everything the
+/// server sends back before it closes or goes quiet.
+fn exchange_raw(address: SocketAddr, bytes: &[u8], half_close: bool) -> String {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+    stream.write_all(bytes).unwrap();
+    if half_close {
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+    }
+    let mut raw = Vec::new();
+    let _ = stream.read_to_end(&mut raw);
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+#[test]
+fn test_a_huge_content_length_is_refused_and_the_server_survives() {
+    let running = start(1);
+    let head = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 1000000000000\r\n\r\n{";
+    let raw = exchange_raw(running.address, head.as_bytes(), true);
+    assert!(raw.starts_with("HTTP/1.1 413 "), "{raw}");
+    assert_eq!(200, get(running.address, "/up").0);
+    running.stop();
+}
+
+#[test]
+fn test_a_truncated_body_is_not_dispatched() {
+    let running = start(1);
+    let body = r#"{"name":"Ann"}"#;
+    let request = format!(
+        "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 2048\r\n\r\n{body}"
+    );
+    let raw = exchange_raw(running.address, request.as_bytes(), true);
+    assert!(!raw.contains(" 201 "), "{raw}");
+    running.stop();
+}
+
+#[test]
+fn test_chunked_bodies_are_decoded() {
+    let running = start(1);
+    let request = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5;ext=1\r\n{\"nam\r\n9\r\ne\":\"Ann\"}\r\n0\r\nX-Trailer: yes\r\n\r\n";
+    assert_eq!((201, json!({"name": "Ann", "page": null})), send(running.address, request));
+    running.stop();
+}
+
+#[test]
+fn test_content_length_with_transfer_encoding_is_400() {
+    let running = start(1);
+    let request = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+    let raw = exchange_raw(running.address, request.as_bytes(), false);
+    assert!(raw.starts_with("HTTP/1.1 400 "), "{raw}");
+    running.stop();
+}
+
+#[test]
+fn test_expect_continue_gets_100_before_the_body() {
+    let running = start(1);
+    let body = r#"{"name":"Ann"}"#;
+    let mut stream = TcpStream::connect(running.address).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+    let head = format!(
+        "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    let mut interim = [0u8; 25];
+    stream.read_exact(&mut interim).unwrap();
+    assert_eq!(b"HTTP/1.1 100 Continue\r\n\r\n", &interim);
+    stream.write_all(body.as_bytes()).unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    assert!(raw.starts_with("HTTP/1.1 201 "), "{raw}");
+    running.stop();
+}
+
+#[test]
+fn test_pipelined_requests_get_answers_in_order() {
+    let running = start(1);
+    let mut stream = TcpStream::connect(running.address).unwrap();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+    stream.write_all(b"GET /big HTTP/1.1\r\nHost: test\r\n\r\nGET /big HTTP/1.1\r\nHost: test\r\n\r\n").unwrap();
+    assert!(read_response(&mut stream) > 4096);
+    assert!(read_response(&mut stream) > 4096);
+    running.stop();
+}
+
+#[test]
+fn test_head_runs_the_get_route_without_a_body() {
+    let running = start(1);
+    let raw = exchange_raw(running.address, b"HEAD /up HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n", false);
+    assert!(raw.starts_with("HTTP/1.1 200 "), "{raw}");
+    assert!(raw.contains("Content-Length: 11\r\n"), "{raw}");
+    assert!(raw.ends_with("\r\n\r\n"), "{raw}");
+    running.stop();
+}
+
+fn post_echo(address: SocketAddr, content_type: &str, body: &str) -> (u16, Json) {
+    let request = format!(
+        "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    send(address, &request)
+}
+
+#[test]
+fn test_malformed_json_is_400_and_the_action_never_runs() {
+    let running = start(1);
+    assert_eq!((400, json!({"status": 400, "error": "Bad Request"})), post_echo(running.address, "application/json", "{"));
+    // Rails doesn't parse an empty body, so it isn't malformed.
+    assert_eq!((201, json!({"name": null, "page": null})), post_echo(running.address, "application/json", ""));
+    // Routing comes first, as in Rails: no route is still a 404.
+    let request = "POST /nowhere HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n{";
+    assert_eq!(404, send(running.address, request).0);
+    running.stop();
+}
+
+#[test]
+fn test_only_json_media_types_are_parsed_as_json() {
+    let running = start(1);
+    let body = r#"{"name":"Ann"}"#;
+    assert_eq!((201, json!({"name": null, "page": null})), post_echo(running.address, "application/jsonp", body));
+    assert_eq!((201, json!({"name": "Ann", "page": null})), post_echo(running.address, "Application/JSON; charset=utf-8", body));
+    assert_eq!((201, json!({"name": "Ann", "page": null})), post_echo(running.address, "text/x-json", body));
+    running.stop();
+}
+
+#[test]
+fn test_form_bodies_become_params() {
+    let running = start(1);
+    let (status, echoed) = post_echo(running.address, "application/x-www-form-urlencoded", "name=Ann+Lee&page=3");
+    assert_eq!((201, json!({"name": "Ann Lee", "page": "3"})), (status, echoed));
+    running.stop();
+}

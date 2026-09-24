@@ -6,6 +6,7 @@ mod request;
 mod response;
 mod router;
 pub mod server;
+mod wire;
 
 pub use controller::{Action, Controller, action, error_response};
 pub use params::{Params, parse_query};
