@@ -82,11 +82,15 @@ pub trait Model: Record {
 /// or permitted params supply them.
 pub type Attributes = Vec<(String, Value)>;
 
-/// `assign_attributes`: casts and sets each value, enums included, and
-/// keeps each value as given.
+/// `assign_attributes`: casts and sets each value, enums included, then
+/// normalizes it, and keeps each value as given.
 pub(crate) fn assign_to<M: Model>(record: &mut M, attributes: &[(String, Value)]) -> Result<()> {
     for (name, value) in attributes {
         record.set(name, M::behavior().cast_assignment(name, value.clone()))?;
+        if M::behavior().normalizes_attribute(name) {
+            let normalized = M::behavior().normalize(name, record.get(name));
+            record.set(name, normalized)?;
+        }
         let cast = record.get(name);
         record.before_type_cast_mut().assign(name, value.clone(), cast);
     }

@@ -63,8 +63,13 @@ impl<M> Slot<M> {
 }
 
 impl Ctx {
-    /// `Post.new(...)`: adds an unsaved record.
-    pub fn build<M: Model>(&mut self, record: M) -> Handle<M> {
+    /// `Post.new(...)`: adds an unsaved record, after the model's
+    /// `has_secure_token`s fill in the tokens it wasn't given, as Rails'
+    /// after_initialize does.
+    pub fn build<M: Model>(&mut self, mut record: M) -> Handle<M> {
+        for (attribute, length) in &M::behavior().tokens {
+            crate::secure_token::fill(&mut record, attribute, *length).expect("has_secure_token names a String column");
+        }
         self.push(Slot::new(record, None))
     }
 

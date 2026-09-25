@@ -161,7 +161,7 @@ impl<M: Model> Relation<M> {
     /// `where(memberships: { user_id: 1 })`: a column of a joined table,
     /// cast by that table's model.
     pub fn where_on<J: Model>(mut self, column: &str, value: impl Into<Value>) -> Self {
-        let value = J::behavior().to_database(column, J::cast_query(column, value.into()));
+        let value = J::behavior().query_value(column, J::cast_query(column, value.into()));
         self.filters.push(Filter::EqOn(J::TABLE, column.to_string(), value));
         self
     }

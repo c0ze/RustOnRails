@@ -28,6 +28,22 @@ pub fn value_json(value: Value) -> Json {
     }
 }
 
+/// Ruby's `Hash#merge` on two JSON objects, such as `record.as_json.merge(
+/// "overdue" => true)`: the other's values win, a key already present
+/// keeps its place, and new keys go last. Rutile compiles `merge` only on
+/// hashes, so anything else is a bug in the generated code.
+pub fn merge(base: Json, other: Json) -> Json {
+    match (base, other) {
+        (Json::Object(mut base), Json::Object(other)) => {
+            for (key, value) in other {
+                base.insert(key, value);
+            }
+            Json::Object(base)
+        }
+        (base, other) => panic!("merge takes two JSON objects, not {base} and {other}"),
+    }
+}
+
 /// `errors.as_json`: messages by attribute, attributes in first-error order.
 pub fn errors_json(errors: &Errors) -> Json {
     let mut map = Map::new();

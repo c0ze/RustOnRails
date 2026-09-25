@@ -48,7 +48,7 @@ impl<M: Model> Relation<M> {
                     let target = format!("{table}.{}", quote(column));
                     let cast: Vec<Value> = values
                         .iter()
-                        .map(|v| M::behavior().to_database(column, M::cast_query(column, v.clone())))
+                        .map(|v| M::behavior().query_value(column, M::cast_query(column, v.clone())))
                         .filter(|v| !v.is_nil())
                         .collect();
                     if cast.is_empty() {
@@ -87,7 +87,7 @@ impl<M: Model> Relation<M> {
                 Filter::Gte(c, v) => (c, ">=", v),
             };
             let target = format!("{table}.{}", quote(column));
-            match M::behavior().to_database(column, M::cast_query(column, value.clone())) {
+            match M::behavior().query_value(column, M::cast_query(column, value.clone())) {
                 Value::Nil if op == "<>" => sql.push_str(&format!("{target} IS NOT NULL")),
                 Value::Nil => sql.push_str(&format!("{target} IS NULL")),
                 value => {

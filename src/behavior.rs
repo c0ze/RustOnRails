@@ -8,6 +8,8 @@ use crate::{Ctx, Handle, Numericality, Record, Result, Value};
 pub type Hook<M> = fn(&mut Ctx, Handle<M>) -> Result<()>;
 /// An `if:` or `unless:` condition.
 pub type Cond<M> = fn(&Ctx, Handle<M>) -> bool;
+/// `normalizes :email, with: ->(email) { ... }`, for a String attribute.
+pub type Normalizer = fn(String) -> String;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -70,12 +72,22 @@ pub struct Behavior<M> {
     pub(crate) enums: Vec<EnumDef>,
     pub(crate) validations: Vec<Guarded<Validation<M>, M>>,
     pub(crate) callbacks: Vec<Guarded<(Event, Hook<M>), M>>,
+    /// `has_secure_token`s generated when a record is built: attribute and length.
+    pub(crate) tokens: Vec<(&'static str, usize)>,
+    pub(crate) normalizers: Vec<(&'static str, Normalizer)>,
     last: Option<Last>,
 }
 
 impl<M> Default for Behavior<M> {
     fn default() -> Self {
-        Self { enums: Vec::new(), validations: Vec::new(), callbacks: Vec::new(), last: None }
+        Self {
+            enums: Vec::new(),
+            validations: Vec::new(),
+            callbacks: Vec::new(),
+            tokens: Vec::new(),
+            normalizers: Vec::new(),
+            last: None,
+        }
     }
 }
 
