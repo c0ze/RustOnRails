@@ -38,7 +38,7 @@ pub use model::{Attributes, Model, Record};
 #[doc(hidden)]
 pub use model::BeforeTypeCast;
 pub use numericality::{Number, Numericality};
-pub use relation::Relation;
+pub use relation::{InnerJoin, Joinable, Relation, sanitize_sql_like};
 pub use support::{Blank, RubyString};
 pub use validation::Errors;
 pub use value::{Date, Time, Value, local_today, now, today};

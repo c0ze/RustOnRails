@@ -28,6 +28,10 @@ pub enum Error {
     Abort,
     /// A method called on nil, Ruby's `NoMethodError` for `nil`.
     Nil { what: &'static str },
+    /// A method the value's class doesn't have, Ruby's `NoMethodError`.
+    NoMethod { what: &'static str, value: Value },
+    /// An Integer Ruby would promote to a Bignum.
+    Overflow { value: String },
     /// A value an attribute's type can't hold.
     Cast { expected: &'static str, value: Value },
     UnknownAttribute { model: &'static str, name: String },
@@ -51,6 +55,8 @@ impl fmt::Display for Error {
             Error::RecordNotDestroyed { model } => write!(f, "Failed to destroy {model}"),
             Error::Abort => write!(f, "callback chain aborted"),
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
+            Error::NoMethod { what, value } => write!(f, "undefined method '{what}' for {value:?}"),
+            Error::Overflow { value } => write!(f, "{value} doesn't fit in a 64-bit integer"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}."),
             Error::InvalidEnum { attribute, value } => write!(f, "'{value}' is not a valid {attribute}"),
