@@ -72,3 +72,13 @@ fn test_expect_needs_a_permitted_key() {
     let null = Params::new(map(json!({"post": {"title": null}})), Default::default());
     assert_eq!(vec![("title".to_string(), Value::Nil)], null.expect("post", &["title"]).unwrap());
 }
+
+/// `params.fetch(:page, 1)`: the value when the key is there (null too),
+/// the default when it isn't.
+#[test]
+fn test_fetch_falls_back_only_when_absent() {
+    let params = Params::new(map(json!({"page": "3", "none": null})), map(json!({})));
+    assert_eq!(Value::from("3"), params.fetch("page", 1));
+    assert_eq!(Value::Int(1), params.fetch("missing", 1));
+    assert_eq!(Value::Nil, params.fetch("none", 1));
+}

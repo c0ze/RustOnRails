@@ -1,4 +1,4 @@
-use rustonrails::{FromValue, Time, Value, now};
+use rustonrails::{Error, FromValue, Time, Value, now};
 
 #[test]
 fn test_blank_follows_ruby() {
@@ -65,4 +65,48 @@ fn test_string_and_boolean_casting() {
 fn test_now_has_microsecond_precision() {
     let time: Time = now();
     assert_eq!(0, time.and_utc().timestamp_subsec_nanos() % 1_000);
+}
+
+// Checked against Ruby 3.4's String#to_i, Float#to_i and nil.to_i.
+#[test]
+fn test_to_i_follows_ruby() {
+    let cases = [
+        ("42abc", 42), ("  -12", -12), ("+5", 5), ("1_000", 1000), ("1__0", 1), ("_1", 0), ("abc", 0), ("", 0),
+        ("012", 12), ("0x1A", 0), ("-_1", 0), ("1_", 1), ("\t\n7", 7), ("2abc", 2), ("0", 0),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(expected, Value::from(text).to_i().unwrap(), "{text:?}");
+    }
+    assert_eq!(0, Value::Nil.to_i().unwrap());
+    assert_eq!(7, Value::Int(7).to_i().unwrap());
+    assert_eq!(2, Value::Float(2.9).to_i().unwrap());
+    assert_eq!(-2, Value::Float(-2.9).to_i().unwrap());
+    let time: Time = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap().naive_utc();
+    assert_eq!(1_700_000_000, Value::Time(time).to_i().unwrap());
+}
+
+/// Where Ruby would make a Bignum, or has no to_i, this fails.
+#[test]
+fn test_to_i_fails_where_ruby_cant_fit_an_i64() {
+    assert_eq!(i64::MAX, Value::from("9223372036854775807").to_i().unwrap());
+    assert!(matches!(Value::from("99999999999999999999").to_i(), Err(Error::Overflow { .. })));
+    assert!(matches!(Value::Float(1e20).to_i(), Err(Error::Overflow { .. })));
+    assert!(matches!(Value::Float(f64::NAN).to_i(), Err(Error::Overflow { .. })));
+    assert!(matches!(Value::Bool(true).to_i(), Err(Error::NoMethod { what: "to_i", .. })));
+}
+
+/// Only a String answers to_str; nil fails as Ruby's NoMethodError on nil does.
+#[test]
+fn test_to_str_only_for_strings() {
+    assert_eq!("q", Value::from("q").to_str().unwrap());
+    assert!(matches!(Value::Int(5).to_str(), Err(Error::NoMethod { what: "to_str", .. })));
+    assert!(matches!(Value::Nil.to_str(), Err(Error::Nil { what: "to_str" })));
+}
+
+/// Ruby promotes an overflowing Integer to a Bignum; generated code must
+/// fail instead of wrapping, in release builds too.
+#[test]
+fn test_release_builds_check_overflow() {
+    let manifest = include_str!("../Cargo.toml");
+    assert!(manifest.contains("[profile.release]\noverflow-checks = true"), "{manifest}");
 }

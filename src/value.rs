@@ -1,6 +1,7 @@
 use chrono::{NaiveDateTime, SubsecRound, Utc};
 
 use crate::cast::ruby_float;
+use crate::{Error, Result};
 
 /// Times are UTC without a zone, the way Rails stores `datetime` columns.
 pub type Time = NaiveDateTime;
@@ -48,6 +49,67 @@ impl Value {
             Value::Time(t) => t.to_string(),
         }
     }
+
+    /// Ruby's `to_i`: nil is 0, a Float truncates, a Time is its epoch
+    /// seconds, and a String reads its leading integer ("42abc" is 42,
+    /// "abc" is 0). Where Ruby would make a Bignum this fails, and true and
+    /// false have no `to_i`.
+    pub fn to_i(&self) -> Result<i64> {
+        match self {
+            Value::Nil => Ok(0),
+            Value::Int(i) => Ok(*i),
+            Value::Float(f) => {
+                let whole = f.trunc();
+                // i64::MAX as f64 rounds up to 2^63, which doesn't fit.
+                if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&whole) {
+                    Ok(whole as i64)
+                } else {
+                    Err(Error::Overflow { value: f.to_string() })
+                }
+            }
+            Value::Str(s) => string_to_i(s),
+            Value::Time(t) => Ok(t.and_utc().timestamp()),
+            Value::Bool(_) => Err(Error::NoMethod { what: "to_i", value: self.clone() }),
+        }
+    }
+
+    /// `to_str`: only a String has it, so a value that must be one fails
+    /// the way the String method it reaches would in Ruby.
+    pub fn to_str(&self) -> Result<String> {
+        match self {
+            Value::Str(s) => Ok(s.clone()),
+            Value::Nil => Err(Error::Nil { what: "to_str" }),
+            other => Err(Error::NoMethod { what: "to_str", value: other.clone() }),
+        }
+    }
+}
+
+/// Ruby's `String#to_i`: leading whitespace, a sign, then digits with
+/// single underscores between them; whatever follows is ignored.
+fn string_to_i(s: &str) -> Result<i64> {
+    let s = s.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    let (sign, rest) = match s.as_bytes().first() {
+        Some(b'-') => ("-", &s[1..]),
+        Some(b'+') => ("", &s[1..]),
+        _ => ("", s),
+    };
+    let mut digits = String::new();
+    let mut underscore = false;
+    for c in rest.chars() {
+        match c {
+            '0'..='9' => {
+                digits.push(c);
+                underscore = false;
+            }
+            '_' if !digits.is_empty() && !underscore => underscore = true,
+            _ => break,
+        }
+    }
+    if digits.is_empty() {
+        return Ok(0);
+    }
+    let text = format!("{sign}{digits}");
+    text.parse().map_err(|_| Error::Overflow { value: text })
 }
 
 impl From<bool> for Value { fn from(v: bool) -> Self { Value::Bool(v) } }

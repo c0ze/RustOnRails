@@ -27,6 +27,12 @@ impl Params {
         self.get(key).map_or(Value::Nil, scalar)
     }
 
+    /// `params.fetch(:page, 1)`: the value when the key is there (a null
+    /// too, as Rails' fetch), `default` when it isn't.
+    pub fn fetch(&self, key: &str, default: impl Into<Value>) -> Value {
+        self.get(key).map_or_else(|| default.into(), scalar)
+    }
+
     /// `params.require(:user)`: the nested hash, or `ParameterMissing` when
     /// it's absent, empty or not a hash.
     pub fn require(&self, key: &'static str) -> Result<Params> {

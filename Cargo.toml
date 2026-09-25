@@ -11,5 +11,10 @@ postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 
+# Ruby promotes an overflowing Integer to a Bignum. Generated code panics
+# (the server's 500) instead of wrapping, in release builds too.
+[profile.release]
+overflow-checks = true
+
 [workspace]
 members = ["examples/blog", "tools/loadgen"]
