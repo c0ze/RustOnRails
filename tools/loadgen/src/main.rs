@@ -1,7 +1,8 @@
 //! A small HTTP/1.1 load generator for the Rails-vs-Rust benchmark:
-//! `loadgen URL CONCURRENCY SECONDS` opens CONCURRENCY keep-alive
-//! connections, sends GETs for SECONDS, and prints requests per second and
-//! p50/p99 latency of the 200 responses that finished within SECONDS.
+//! `loadgen URL CONCURRENCY SECONDS [HEADER...]` opens CONCURRENCY
+//! keep-alive connections, sends GETs for SECONDS, and prints requests per
+//! second and p50/p99 latency of the 200 responses that finished within
+//! SECONDS. Each HEADER (`"X-Api-Token: abc"`) goes on every request.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -11,18 +12,19 @@ type Connection = BufReader<TcpStream>;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4 {
-        eprintln!("usage: loadgen URL CONCURRENCY SECONDS");
+    if args.len() < 4 || args[4..].iter().any(|h| !h.contains(':') || h.contains(['\r', '\n'])) {
+        eprintln!("usage: loadgen URL CONCURRENCY SECONDS [\"Name: value\"...]");
         std::process::exit(2);
     }
     let (host, path) = split_url(&args[1]);
     let concurrency: usize = args[2].parse().expect("CONCURRENCY is a number");
     let seconds: u64 = args[3].parse().expect("SECONDS is a number");
+    let request = request(&host, &path, &args[4..]);
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let workers: Vec<_> = (0..concurrency)
         .map(|_| {
-            let (host, path) = (host.clone(), path.clone());
-            std::thread::spawn(move || run(&host, &path, deadline))
+            let (host, request) = (host.clone(), request.clone());
+            std::thread::spawn(move || run(&host, &request, deadline))
         })
         .collect();
     let mut latencies = Vec::new();
@@ -54,8 +56,13 @@ fn split_url(url: &str) -> (String, String) {
     }
 }
 
-fn run(host: &str, path: &str, deadline: Instant) -> (Vec<Duration>, usize) {
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\r\n");
+/// The GET every connection sends, with the extra headers.
+fn request(host: &str, path: &str, headers: &[String]) -> String {
+    let extra: String = headers.iter().map(|h| format!("{h}\r\n")).collect();
+    format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n{extra}\r\n")
+}
+
+fn run(host: &str, request: &str, deadline: Instant) -> (Vec<Duration>, usize) {
     let (mut latencies, mut errors, mut connection) = (Vec::new(), 0, None::<Connection>);
     let Some(address) = host.to_socket_addrs().ok().and_then(|mut addresses| addresses.next()) else {
         return (latencies, 1);
@@ -74,7 +81,7 @@ fn run(host: &str, path: &str, deadline: Instant) -> (Vec<Duration>, usize) {
                 }
             },
         };
-        let result = exchange(stream, &request, left);
+        let result = exchange(stream, request, left);
         // A request still in flight at the deadline isn't part of the run.
         if Instant::now() >= deadline {
             break;
@@ -166,6 +173,12 @@ mod tests {
     use std::sync::mpsc::channel;
 
     #[test]
+    fn test_extra_headers_go_before_the_blank_line() {
+        let request = request("h:1", "/projects", &["X-Api-Token: abc".to_string()]);
+        assert_eq!("GET /projects HTTP/1.1\r\nHost: h:1\r\nAccept: application/json\r\nX-Api-Token: abc\r\n\r\n", request);
+    }
+
+    #[test]
     fn test_truncated_headers_are_an_error() {
         let mut reader = Cursor::new(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n".to_vec());
         assert!(read_response(&mut reader).is_err());
@@ -189,7 +202,7 @@ mod tests {
         });
         let (done, finished) = channel();
         std::thread::spawn(move || {
-            done.send(run(&host, "/", Instant::now() + Duration::from_millis(300))).ok();
+            done.send(run(&host, "GET / HTTP/1.1\r\n\r\n", Instant::now() + Duration::from_millis(300))).ok();
         });
         let (latencies, _) = finished.recv_timeout(Duration::from_secs(3)).expect("run returned");
         assert!(latencies.is_empty());
