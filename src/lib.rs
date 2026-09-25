@@ -30,7 +30,7 @@ mod write;
 pub use association::{BelongsTo, HasMany, HasManyThrough, Preload};
 pub use behavior::{Behavior, Check, Cond, Event, Hook, Normalizer};
 pub use cast::FromValue;
-pub use ctx::Ctx;
+pub use ctx::{Connection, Ctx};
 pub use error::{Error, RecordInvalid, Result};
 pub use http::{Action, Constraint, Controller, Handler, Params, Request, Response, Router, action, error_page, error_response, health, parse_query, reason, status};
 pub use http::server;

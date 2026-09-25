@@ -7,11 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use postgres::{Client, NoTls};
-
 use super::wire::{self, WireError};
 use super::{Request, Response, Router, error_page};
-use crate::Ctx;
+use crate::{Connection, Ctx};
 
 /// The largest request body accepted; bigger ones get a 413.
 pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -172,20 +170,20 @@ fn refuse(reader: &mut impl Read, writer: &mut TcpStream, status: u16) {
 }
 
 fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
-    let mut client: Option<Client> = None;
+    let mut kept: Option<Connection> = None;
     loop {
         let job = queue.lock().map(|queue| queue.recv());
         let Ok(Ok(Job::Serve(incoming, reply))) = job else { return };
         // A connection the database closed (restart, failover, idle kill)
-        // is replaced rather than reused.
-        let connection = match client.take().filter(|c| !c.is_closed()) {
-            Some(client) => Ok(client),
-            None => Client::connect(url, NoTls),
+        // is replaced rather than reused, and its statements with it.
+        let connection = match kept.take().filter(|c| !c.is_closed()) {
+            Some(connection) => Ok(connection),
+            None => Connection::connect(url),
         };
         let response = match connection {
             Ok(connection) => {
-                let (response, kept) = handle(router, connection, &incoming);
-                client = kept.filter(|c| !c.is_closed());
+                let (response, back) = handle(router, connection, &incoming);
+                kept = back.filter(|c| !c.is_closed());
                 response
             }
             Err(error) => {
@@ -199,10 +197,10 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
 
 /// Runs one request in a fresh `Ctx`. A panic becomes a 500 and costs the
 /// connection, since the panic may have left it mid-transaction.
-fn handle(router: &Router, client: Client, incoming: &Incoming) -> (Response, Option<Client>) {
-    let mut req = build_request(Ctx::new(client), incoming);
+fn handle(router: &Router, connection: Connection, incoming: &Incoming) -> (Response, Option<Connection>) {
+    let mut req = build_request(Ctx::resume(connection), incoming);
     match catch_unwind(AssertUnwindSafe(|| router.call(&mut req))) {
-        Ok(response) => (response, Some(req.ctx.into_client())),
+        Ok(response) => (response, Some(req.ctx.into_connection())),
         Err(_) => (error_page(500), None),
     }
 }

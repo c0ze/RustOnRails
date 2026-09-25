@@ -177,7 +177,17 @@ impl<M: Model> Relation<M> {
 
     pub(crate) fn fetch(&self, ctx: &mut Ctx) -> Result<Vec<M>> {
         let (sql, params) = self.to_sql();
-        ctx.query(&sql, &params)?.iter().map(from_row::<M>).collect()
+        self.run(ctx, &sql, &params)?.iter().map(from_row::<M>).collect()
+    }
+
+    /// A relation with a SQL fragment has its binds written into the SQL,
+    /// so its statement isn't kept: Rails doesn't prepare one either.
+    fn run(&self, ctx: &mut Ctx, sql: &str, params: &[Value]) -> Result<Vec<postgres::Row>> {
+        if self.filters.iter().any(|filter| matches!(filter, Filter::Sql(..))) {
+            ctx.query_once(sql, params)
+        } else {
+            ctx.query(sql, params)
+        }
     }
 
     pub fn load(&self, ctx: &mut Ctx) -> Result<Vec<Handle<M>>> {
@@ -199,7 +209,7 @@ impl<M: Model> Relation<M> {
 
     pub fn count(&self, ctx: &mut Ctx) -> Result<i64> {
         let (sql, params) = self.to_sql();
-        let rows = ctx.query(&format!("SELECT COUNT(*) FROM ({sql}) AS subquery"), &params)?;
+        let rows = self.run(ctx, &format!("SELECT COUNT(*) FROM ({sql}) AS subquery"), &params)?;
         Ok(rows[0].get(0))
     }
 
