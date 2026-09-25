@@ -14,6 +14,7 @@ mod error;
 mod http;
 mod json;
 mod model;
+mod numericality;
 mod persistence;
 mod pg;
 mod records;
@@ -34,6 +35,9 @@ pub use http::server;
 pub use json::{AsJson, errors_json, format_date, format_time, value_json};
 pub use records::Handle;
 pub use model::{Attributes, Model, Record};
+#[doc(hidden)]
+pub use model::BeforeTypeCast;
+pub use numericality::{Number, Numericality};
 pub use relation::Relation;
 pub use support::{Blank, RubyString};
 pub use validation::Errors;

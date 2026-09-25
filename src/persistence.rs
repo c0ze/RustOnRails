@@ -1,4 +1,4 @@
-use crate::{Ctx, Error, Event, Handle, Model, Record, Result, Value, now, validation, write};
+use crate::{BeforeTypeCast, Ctx, Error, Event, Handle, Model, Record, Result, Value, now, validation, write};
 
 impl Ctx {
     /// `valid?`: runs the validation callbacks and the validations,
@@ -18,17 +18,16 @@ impl Ctx {
     /// Everything runs in a transaction (a savepoint when nested); on
     /// failure the record keeps its unsaved state and id.
     pub fn save<M: Model>(&mut self, record: Handle<M>) -> Result<bool> {
-        let saved_before = self.slot(record).saved.clone();
-        let id_before = self[record].get("id");
+        let before = (self.slot(record).saved.clone(), self[record].get("id"), self[record].before_type_cast().clone());
         let outcome = self.transaction(|ctx| ctx.create_or_update(record));
         match outcome {
             Ok(true) => Ok(true),
             Ok(false) | Err(Error::Abort) => {
-                self.restore(record, saved_before, id_before)?;
+                self.restore(record, before)?;
                 Ok(false)
             }
             Err(error) => {
-                self.restore(record, saved_before, id_before)?;
+                self.restore(record, before)?;
                 Err(error)
             }
         }
@@ -82,6 +81,8 @@ impl Ctx {
         let snapshot = self[record].clone();
         let id = write::insert_row(self, &snapshot)?;
         self[record].set("id", id)?;
+        // Rails' changes_applied: attributes read as the database has them.
+        self[record].before_type_cast_mut().forget();
         let saved = self[record].clone();
         self.slot_mut(record).saved = Some(saved);
         Ok(())
@@ -92,6 +93,7 @@ impl Ctx {
     fn write_changes<M: Model>(&mut self, record: Handle<M>) -> Result<()> {
         let mut columns = self.changed(record);
         if columns.is_empty() {
+            self[record].before_type_cast_mut().forget();
             return Ok(());
         }
         if M::COLUMNS.contains(&"updated_at") && !columns.contains(&"updated_at") {
@@ -101,6 +103,7 @@ impl Ctx {
         let id = self.saved_id(record)?;
         let snapshot = self[record].clone();
         write::update_row(self, id, &snapshot, &columns)?;
+        self[record].before_type_cast_mut().forget();
         self.slot_mut(record).saved = Some(snapshot);
         Ok(())
     }
@@ -165,9 +168,11 @@ impl Ctx {
         self.slot(record).saved.as_ref().and_then(Record::id).ok_or(Error::NotPersisted { model: M::NAME })
     }
 
-    /// Puts back what a rolled-back save changed: the saved state and id.
-    fn restore<M: Model>(&mut self, record: Handle<M>, saved: Option<M>, id: Value) -> Result<()> {
+    /// Puts back what a rolled-back save changed: the saved state, the id
+    /// and the values as given.
+    fn restore<M: Model>(&mut self, record: Handle<M>, (saved, id, given): (Option<M>, Value, BeforeTypeCast)) -> Result<()> {
         self.slot_mut(record).saved = saved;
+        *self[record].before_type_cast_mut() = given;
         self[record].set("id", id)
     }
 

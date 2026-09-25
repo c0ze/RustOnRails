@@ -58,26 +58,44 @@ pub(crate) fn run<M: Model>(ctx: &mut Ctx, record: Handle<M>) -> Result<()> {
         }
         match &entry.item {
             Validation::Custom(hook) => hook(ctx, record)?,
-            Validation::Check { attribute, check } => check_one(ctx, record, attribute, check)?,
+            Validation::Check { attribute, check, allow_nil, allow_blank } => {
+                // Both look at the attribute as cast.
+                let value = ctx[record].get(attribute);
+                if (*allow_nil && value.is_nil()) || (*allow_blank && value.is_blank()) {
+                    continue;
+                }
+                check_one(ctx, record, attribute, check, value)?
+            }
         }
     }
     Ok(())
 }
 
-fn check_one<M: Model>(ctx: &mut Ctx, record: Handle<M>, attribute: &str, check: &Check) -> Result<()> {
-    let value = ctx[record].get(attribute);
-    let message = match check {
-        Check::Presence => value.is_blank().then(|| "can't be blank".to_string()),
-        Check::Length { minimum, maximum } => length_message(&value, *minimum, *maximum),
-        Check::Format(regex) => (!regex.is_match(&value.to_ruby_string())).then(|| "is invalid".to_string()),
-        Check::Inclusion(allowed) => (!allowed.contains(&value)).then(|| "is not included in the list".to_string()),
-        Check::Uniqueness => taken(ctx, record, attribute, value)?.then(|| "has already been taken".to_string()),
-        Check::Required { foreign_key, table } => missing(ctx, record, foreign_key, table)?.then(|| "must exist".to_string()),
+fn check_one<M: Model>(ctx: &mut Ctx, record: Handle<M>, attribute: &str, check: &Check, value: Value) -> Result<()> {
+    let message = |failed: bool, message: &str| if failed { vec![message.to_string()] } else { Vec::new() };
+    let messages = match check {
+        Check::Presence => message(value.is_blank(), "can't be blank"),
+        Check::Length { minimum, maximum } => length_message(&value, *minimum, *maximum).into_iter().collect(),
+        Check::Format(regex) => message(!regex.is_match(&value.to_ruby_string()), "is invalid"),
+        Check::Inclusion(allowed) => message(!allowed.contains(&value), "is not included in the list"),
+        Check::Uniqueness { scope } => message(taken(ctx, record, attribute, value, scope)?, "has already been taken"),
+        Check::Numericality(options) => options.messages(&as_given(ctx, record, attribute, value)),
+        Check::Required { foreign_key, table } => message(missing(ctx, record, foreign_key, table)?, "must exist"),
     };
-    if let Some(message) = message {
+    for message in messages {
         ctx.errors_mut(record).add(attribute, message);
     }
     Ok(())
+}
+
+/// Numericality reads the value as it was assigned, while the attribute
+/// still holds what that cast to. Nil or false as given fall back to the
+/// cast value, as Ruby's `raw_value || value` does.
+fn as_given<M: Model>(ctx: &Ctx, record: Handle<M>, attribute: &str, cast: Value) -> Value {
+    match ctx[record].before_type_cast().given(attribute, &cast) {
+        None | Some(Value::Nil | Value::Bool(false)) => cast,
+        Some(given) => given.clone(),
+    }
 }
 
 /// nil counts as length 0, as `nil.to_s.length` does in Rails.
@@ -90,8 +108,12 @@ fn length_message(value: &Value, minimum: Option<usize>, maximum: Option<usize>)
     minimum.filter(|min| length < *min).map(|min| format!("is too short (minimum is {min} {})", unit(min)))
 }
 
-fn taken<M: Model>(ctx: &mut Ctx, record: Handle<M>, attribute: &str, value: Value) -> Result<bool> {
+/// Scope columns take the record's own values, nil included (`IS NULL`).
+fn taken<M: Model>(ctx: &mut Ctx, record: Handle<M>, attribute: &str, value: Value, scope: &[&str]) -> Result<bool> {
     let mut others = M::all().where_eq(attribute, value);
+    for column in scope {
+        others = others.where_eq(column, ctx[record].get(column));
+    }
     if let Some(id) = ctx.slot(record).saved.as_ref().and_then(|saved| saved.id()) {
         others = others.where_not("id", id);
     }

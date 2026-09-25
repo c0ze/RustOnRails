@@ -20,7 +20,7 @@ impl Model for Person {
                 })
                 .validates("name", Check::Presence)
                 .validates("name", Check::Length { minimum: Some(2), maximum: Some(5) })
-                .validates("email", Check::Uniqueness)
+                .validates("email", Check::Uniqueness { scope: &[] })
                 .validates("email", Check::Format(Regex::new(r"\A[^@\s]+@[^@\s]+\z").unwrap()))
                 .unless(|ctx, person| ctx[person].name.as_deref() == Some("skip"))
                 .validate(no_bobs)
@@ -133,4 +133,65 @@ fn test_belongs_to_must_exist_and_enum_inclusion() {
     let owner = insert_user(&mut ctx, "owner@example.com");
     let fine = ctx.build(Entry { user_id: Some(owner), ..Entry::new_record() });
     assert!(ctx.is_valid(fine).unwrap());
+}
+
+model! {
+    pub struct Titled in "posts" { id: i64, user_id: i64, title: String, body: String }
+}
+
+impl Model for Titled {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Titled>> = LazyLock::new(|| {
+            Behavior::<Titled>::new()
+                .validates("title", Check::Uniqueness { scope: &["user_id"] })
+                .validates("body", Check::Presence)
+                .allow_nil()
+                .validates("body", Check::Length { minimum: Some(2), maximum: None })
+                .allow_blank()
+        });
+        &BEHAVIOR
+    }
+}
+
+fn titled(ctx: &mut Ctx, user_id: Option<i64>, body: Option<&str>) -> Handle<Titled> {
+    ctx.build(Titled { user_id, title: Some("Hello".into()), body: body.map(Into::into), ..Titled::new_record() })
+}
+
+fn errors_on(ctx: &mut Ctx, record: Handle<Titled>, attribute: &str) -> Vec<String> {
+    ctx.is_valid(record).unwrap();
+    ctx.errors(record).on(attribute).into_iter().map(String::from).collect()
+}
+
+#[test]
+fn test_uniqueness_within_a_scope() {
+    let mut ctx = support::ctx();
+    let alice = insert_user(&mut ctx, "alice@example.com");
+    let bob = insert_user(&mut ctx, "bob@example.com");
+    let sql = "INSERT INTO posts (user_id, title, created_at, updated_at) VALUES ($1, 'Hello', now(), now()) RETURNING id";
+    let id: i64 = ctx.query(sql, &[Value::Int(alice)]).unwrap()[0].get(0);
+    let same = titled(&mut ctx, Some(alice), Some("ok"));
+    assert_eq!(vec!["has already been taken"], errors_on(&mut ctx, same, "title"));
+    let other = titled(&mut ctx, Some(bob), Some("ok"));
+    assert!(errors_on(&mut ctx, other, "title").is_empty());
+    // A nil scope value matches NULL, as `where(user_id: nil)` does; no row has one.
+    let orphan = titled(&mut ctx, None, Some("ok"));
+    assert!(errors_on(&mut ctx, orphan, "title").is_empty());
+    // The record itself doesn't count.
+    let saved = Titled::find(&mut ctx, id).unwrap();
+    assert!(errors_on(&mut ctx, saved, "title").is_empty());
+}
+
+#[test]
+fn test_allow_nil_and_allow_blank_skip_a_check() {
+    let mut ctx = support::ctx();
+    let cases: [(Option<&str>, &[&str]); 4] = [
+        (None, &[]),
+        (Some(""), &["can't be blank"]),
+        (Some("  "), &["can't be blank"]),
+        (Some("a"), &["is too short (minimum is 2 characters)"]),
+    ];
+    for (body, expected) in cases {
+        let record = titled(&mut ctx, None, body);
+        assert_eq!(expected, errors_on(&mut ctx, record, "body"), "{body:?}");
+    }
 }

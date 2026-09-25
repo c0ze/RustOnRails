@@ -2,7 +2,7 @@ use regex::Regex;
 
 use crate::association::BelongsTo;
 use crate::enums::EnumDef;
-use crate::{Ctx, Handle, Record, Result, Value};
+use crate::{Ctx, Handle, Numericality, Record, Result, Value};
 
 /// A callback or a custom validation, like `before_save :stamp_published_at`.
 pub type Hook<M> = fn(&mut Ctx, Handle<M>) -> Result<()>;
@@ -28,14 +28,17 @@ pub enum Check {
     Presence,
     Length { minimum: Option<usize>, maximum: Option<usize> },
     Format(Regex),
-    Uniqueness,
+    /// `uniqueness:`, with `scope:`'s columns (none without it).
+    Uniqueness { scope: &'static [&'static str] },
     Inclusion(Vec<Value>),
+    Numericality(Numericality),
     /// What `belongs_to` adds unless `optional: true`: the row must exist.
     Required { foreign_key: &'static str, table: &'static str },
 }
 
 pub(crate) enum Validation<M> {
-    Check { attribute: &'static str, check: Check },
+    /// `allow_nil` and `allow_blank` skip the check for such a value.
+    Check { attribute: &'static str, check: Check, allow_nil: bool, allow_blank: bool },
     Custom(Hook<M>),
 }
 
@@ -98,9 +101,29 @@ impl<M> Behavior<M> {
     }
 
     pub fn validates(mut self, attribute: &'static str, check: Check) -> Self {
-        self.validations.push(Guarded::new(Validation::Check { attribute, check }));
+        self.validations.push(Guarded::new(Validation::Check { attribute, check, allow_nil: false, allow_blank: false }));
         self.last = Some(Last::Validation);
         self
+    }
+
+    /// `allow_nil: true` on the `validates` just before: nil skips it.
+    pub fn allow_nil(mut self) -> Self {
+        *self.last_check("allow_nil").0 = true;
+        self
+    }
+
+    /// `allow_blank: true` on the `validates` just before: nil, false and
+    /// blank strings skip it.
+    pub fn allow_blank(mut self) -> Self {
+        *self.last_check("allow_blank").1 = true;
+        self
+    }
+
+    fn last_check(&mut self, option: &str) -> (&mut bool, &mut bool) {
+        match (&self.last, self.validations.last_mut().map(|entry| &mut entry.item)) {
+            (Some(Last::Validation), Some(Validation::Check { allow_nil, allow_blank, .. })) => (allow_nil, allow_blank),
+            _ => panic!("`{option}` needs a `validates` just before it"),
+        }
     }
 
     /// `validate :method`

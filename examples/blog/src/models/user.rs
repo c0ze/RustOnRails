@@ -35,7 +35,7 @@ impl Model for User {
 // validates :email, presence
 .validates("email", Check::Presence)
 // validates :email, uniqueness
-.validates("email", Check::Uniqueness)
+.validates("email", Check::Uniqueness { scope: &[] })
 // validates :email, format
 .validates("email", Check::Format(Regex::new(r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\z").expect("the Ruby regexp compiles")))
 // before_validation (app/models/user.rb:5)
