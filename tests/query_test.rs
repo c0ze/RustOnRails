@@ -1,6 +1,6 @@
 mod support;
 
-use rustonrails::{BelongsTo, HasMany, Model, Time, model, now, sanitize_sql_like};
+use rustonrails::{BelongsTo, HasMany, HasManyThrough, Model, Time, Value, model, now, sanitize_sql_like};
 
 model! {
     pub struct Author in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
@@ -25,6 +25,8 @@ impl Article {
 impl Author {
     // has_many :comments
     pub const REMARKS: HasMany<Author, Remark> = HasMany::new("comments", "user_id", None);
+    // has_many :commented, through: :comments, source: :post
+    pub const COMMENTED: HasManyThrough<Author, Article> = HasManyThrough::new("commented", "comments", "user_id", "post_id");
 }
 
 impl Model for Author {
@@ -118,7 +120,7 @@ fn test_offset_skips_rows() {
 }
 
 /// `where("title ILIKE ? AND body = ?", ...)`: parenthesized as Rails
-/// writes it, its binds numbered after the conditions before it.
+/// writes it, its binds inlined in order as quoted literals.
 #[test]
 fn test_a_sql_fragment_binds_in_order() {
     let mut ctx = support::ctx();
@@ -127,7 +129,7 @@ fn test_a_sql_fragment_binds_in_order() {
     article(&mut ctx, ann, "Other");
     let relation = Article::all().where_eq("status", 0).where_sql("title ILIKE ? AND body = ?", vec!["%notes".into(), "b".into()]);
     let (sql, _) = relation.to_sql();
-    assert!(sql.contains(r#"WHERE "posts"."status" = $1 AND (title ILIKE $2 AND body = $3)"#), "{sql}");
+    assert!(sql.contains(r#"WHERE "posts"."status" = $1 AND (title ILIKE E'%notes' AND body = E'b')"#), "{sql}");
     let found = relation.load(&mut ctx).unwrap();
     assert_eq!(vec![Some(notes)], found.into_iter().map(|h| ctx[h].id).collect::<Vec<_>>());
 }
@@ -148,4 +150,41 @@ fn test_sanitize_sql_like_matches_the_string_itself() {
     assert_eq!(vec![ids[0]], search(&mut ctx, "50%"));
     assert_eq!(vec![ids[2]], search(&mut ctx, "a_b"));
     assert_eq!(vec![ids[4]], search(&mut ctx, r"k\s"));
+}
+
+/// A has_many :through relation joined further: every JOIN comes before the
+/// WHERE, as Rails writes it.
+#[test]
+fn test_joins_after_a_through_association() {
+    let mut ctx = support::ctx();
+    let (ann, bob) = (author(&mut ctx, "ann"), author(&mut ctx, "bob"));
+    let (a, b) = (article(&mut ctx, bob, "A"), article(&mut ctx, ann, "B"));
+    remark(&mut ctx, ann, a, "r");
+    remark(&mut ctx, ann, b, "r");
+    let ann = Author::find(&mut ctx, ann).unwrap();
+    let by_bob = Author::COMMENTED.of(&ctx, ann).joins(&Article::AUTHOR).where_on::<Author>("name", "bob");
+    let found = by_bob.load(&mut ctx).unwrap();
+    assert_eq!(vec![Some(a)], found.into_iter().map(|h| ctx[h].id).collect::<Vec<_>>());
+}
+
+/// Rails inlines a fragment's binds as quoted literals, and Postgres types
+/// them from where they stand: a param string compared with an integer
+/// column works, and quotes and backslashes stay data.
+#[test]
+fn test_fragment_binds_are_quoted_literals() {
+    let mut ctx = support::ctx();
+    let ann = author(&mut ctx, "ann");
+    let quoted = article(&mut ctx, ann, "it's");
+    let slash = article(&mut ctx, ann, r"back\slash");
+    let find = |ctx: &mut rustonrails::Ctx, sql: &'static str, binds: Vec<Value>| -> Vec<i64> {
+        let found = Article::all().where_sql(sql, binds).order_asc("id").load(ctx).unwrap();
+        found.into_iter().map(|h| ctx[h].id.unwrap()).collect()
+    };
+    assert_eq!(vec![quoted, slash], find(&mut ctx, "comments_count >= ?", vec!["0".into()]));
+    assert_eq!(vec![quoted], find(&mut ctx, "title = ?", vec!["it's".into()]));
+    assert_eq!(vec![slash], find(&mut ctx, "title = ?", vec![r"back\slash".into()]));
+    assert!(find(&mut ctx, "title = ?", vec!["x' OR '1'='1".into()]).is_empty());
+    assert!(find(&mut ctx, "title = ?", vec![Value::Nil]).is_empty());
+    assert_eq!(vec![quoted, slash], find(&mut ctx, "comments_count-? > 0 AND created_at <= ?", vec![Value::Int(-1), now().into()]));
+    assert_eq!(vec![quoted, slash], find(&mut ctx, "comments_count < ? AND (1 = 1) = ?", vec![0.5.into(), true.into()]));
 }
