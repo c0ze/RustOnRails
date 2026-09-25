@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use postgres::Row;
 use postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 
-use crate::{Result, Time, Value};
+use crate::{Date, Result, Time, Value};
 
 /// Double-quotes an identifier. Identifiers come from generated code, never
 /// from user input; values always go as parameters.
@@ -27,6 +27,8 @@ pub(crate) fn read(row: &Row, index: usize) -> Result<Value> {
         row.try_get::<_, Option<f64>>(index)?.map(Value::Float)
     } else if ty == Type::TIMESTAMP {
         row.try_get::<_, Option<Time>>(index)?.map(Value::Time)
+    } else if ty == Type::DATE {
+        row.try_get::<_, Option<Date>>(index)?.map(Value::Date)
     } else {
         row.try_get::<_, Option<String>>(index)?.map(Value::Str)
     };
@@ -42,6 +44,7 @@ impl ToSql for Value {
             Value::Float(_) => *ty == Type::FLOAT8,
             Value::Str(_) => <String as ToSql>::accepts(ty),
             Value::Time(_) => *ty == Type::TIMESTAMP,
+            Value::Date(_) => *ty == Type::DATE,
         };
         if !fits {
             // Binding by variant alone would write text bytes into a binary
@@ -58,6 +61,7 @@ impl ToSql for Value {
             Value::Float(f) => f.to_sql(ty, out),
             Value::Str(s) => s.to_sql(ty, out),
             Value::Time(t) => t.to_sql(ty, out),
+            Value::Date(d) => d.to_sql(ty, out),
         }
     }
 

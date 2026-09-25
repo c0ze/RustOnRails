@@ -1,10 +1,18 @@
+use chrono::Datelike;
 use serde_json::{Map, Value as Json};
 
-use crate::{BelongsTo, Ctx, Errors, HasMany, Handle, Model, Result, Time, Value};
+use crate::{BelongsTo, Ctx, Date, Errors, HasMany, Handle, Model, Result, Time, Value};
 
 /// ActiveSupport's JSON time format: ISO 8601 in UTC with milliseconds.
 pub fn format_time(time: Time) -> String {
     time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
+/// `Date#to_s` and its JSON: Ruby's `%Y-%m-%d`, whose year has at least
+/// four digits and no `+` (chrono's `%Y` writes "+10000").
+pub fn format_date(date: Date) -> String {
+    let sign = if date.year() < 0 { "-" } else { "" };
+    format!("{sign}{:04}-{:02}-{:02}", date.year().unsigned_abs(), date.month(), date.day())
 }
 
 /// An attribute value the way `as_json` writes it.
@@ -16,6 +24,7 @@ pub fn value_json(value: Value) -> Json {
         Value::Float(f) => serde_json::Number::from_f64(f).map_or(Json::Null, Json::Number),
         Value::Str(s) => Json::String(s),
         Value::Time(t) => Json::String(format_time(t)),
+        Value::Date(d) => Json::String(format_date(d)),
     }
 }
 

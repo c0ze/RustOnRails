@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
 
-use crate::{Error, Result, Time, Value};
+use crate::{Date, Error, Result, Time, Value};
 
 /// Casts an assigned value to an attribute's type the way Active Model
 /// types do (checked against Rails 8.1.4): "42" becomes 42, "abc" becomes 0
@@ -126,6 +126,52 @@ fn parse_time(s: &str) -> Option<Time> {
         }
     }
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|date| date.and_hms_opt(0, 0, 0))
+}
+
+impl FromValue for Date {
+    fn from_value(value: Value) -> Result<Option<Self>> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Date(d) => Ok(Some(d)),
+            Value::Time(t) => Ok(Some(t.date())),
+            Value::Str(s) => parse_date(&s),
+            other => Err(Error::Cast { expected: "date", value: other }),
+        }
+    }
+}
+
+/// An ISO 8601 date, alone or starting a timestamp, whose offset Rails
+/// ignores too. `\d` would take any Unicode digit.
+static ISO_DATE: LazyLock<Regex> = LazyLock::new(|| {
+    let time = r"[Tt ] *(?:[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?: ?(?:[Zz]|UTC|[+-][0-9]{2}(?::?[0-9]{2})?))?)?";
+    Regex::new(&format!(r"^([0-9]{{4}})-(?:([0-9]{{1,2}})-([0-9]{{1,2}})|([0-9]{{2}})-([0-9]{{2}}){time})$")).expect("regex")
+});
+
+/// What Active Model's date type makes of a string. Rails tries ISO first,
+/// then `Date._parse`, which reads many more formats; a string with digits
+/// in a format this doesn't know is an error rather than a guess. Without
+/// digits there's no year, which is nil in Rails too.
+fn parse_date(s: &str) -> Result<Option<Date>> {
+    let trimmed = s.trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r'));
+    let Some(parts) = ISO_DATE.captures(trimmed) else {
+        if trimmed.chars().any(|c| c.is_ascii_digit()) {
+            return Err(Error::Cast { expected: "date", value: Value::Str(s.to_string()) });
+        }
+        return Ok(None);
+    };
+    // Month and day come from the date-only or the timestamp alternative.
+    let field = |alone: usize, timed: usize| {
+        parts.get(alone).or_else(|| parts.get(timed)).map_or(0, |m| m.as_str().parse::<u32>().unwrap_or(0))
+    };
+    let (year, month, day) = (parts[1].parse::<i32>().unwrap_or(0), field(2, 4), field(3, 5));
+    // Before 1583 Ruby's dates are Julian, so a few days exist in only one
+    // of the calendars.
+    let julian_only = year < 1583 && month == 2 && day == 29 && year % 100 == 0 && year % 400 != 0;
+    let gregorian_only = year == 1582 && month == 10 && (5..=14).contains(&day);
+    if julian_only || gregorian_only {
+        return Err(Error::Cast { expected: "date", value: Value::Str(s.to_string()) });
+    }
+    Ok(NaiveDate::from_ymd_opt(year, month, day))
 }
 
 /// Ruby's `Float#to_s`: shortest digits, always a decimal point, and
