@@ -6,8 +6,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// `ActiveRecord::RecordInvalid`, from the bang methods: the invalid
 /// record's model and its errors, which a `rescue_from` handler taking the
-/// exception renders as `error.record.errors`.
-#[derive(Debug)]
+/// exception renders as `error.record.errors`. Clone, as a Ruby local
+/// copied from it would be.
+#[derive(Clone, Debug)]
 pub struct RecordInvalid {
     pub model: &'static str,
     pub errors: Errors,
