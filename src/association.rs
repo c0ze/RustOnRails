@@ -119,6 +119,17 @@ impl<M: Model, T: Model> HasMany<M, T> {
         }
         Ok(())
     }
+
+    /// `dependent: :nullify`: Rails' `update_all(foreign_key => nil)`, one
+    /// UPDATE with no callbacks and no `updated_at`. A new owner's
+    /// association is empty in Rails, whatever its id says.
+    pub fn nullify_all(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<()> {
+        if ctx.is_new_record(owner) {
+            return Ok(());
+        }
+        let key = ctx[owner].get("id");
+        crate::write::nullify_column::<T>(ctx, self.foreign_key, key)
+    }
 }
 
 /// `has_many :projects, through: :memberships`: the owner's rows in the

@@ -49,6 +49,13 @@ pub(crate) fn delete_row<M: Model>(ctx: &mut Ctx, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// `update_all(column => nil)` for the rows whose `column` is `key`.
+pub(crate) fn nullify_column<M: Model>(ctx: &mut Ctx, column: &str, key: Value) -> Result<()> {
+    let name = quote(column);
+    ctx.execute(&format!("UPDATE {} SET {name} = NULL WHERE {name} = $1", quote(M::TABLE)), &[key])?;
+    Ok(())
+}
+
 /// `update_counters`: one atomic `column = COALESCE(column, 0) + by`.
 pub(crate) fn increment_column<M: Model>(ctx: &mut Ctx, id: i64, column: &str, by: i64) -> Result<()> {
     let name = quote(column);
