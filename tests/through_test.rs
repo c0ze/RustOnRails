@@ -93,3 +93,20 @@ fn test_an_unsaved_owner_has_nothing_through() {
     let nobody = ctx.build(Author::new_record());
     assert!(Author::COMMENTED.of(&ctx, nobody).load(&mut ctx).unwrap().is_empty());
 }
+
+/// Rails loads a limited relation for `include?`: filtering by the id first
+/// would change which rows the limit keeps.
+#[test]
+fn test_include_on_a_limited_relation_looks_in_its_rows() {
+    let mut ctx = support::ctx();
+    let u1 = author(&mut ctx, "ann");
+    let (a, b) = (article(&mut ctx, u1, "A"), article(&mut ctx, u1, "B"));
+    remark(&mut ctx, u1, a);
+    remark(&mut ctx, u1, b);
+    let ann = Author::find(&mut ctx, u1).unwrap();
+    let first = Author::COMMENTED.of(&ctx, ann).order_asc("id").limit(1);
+    let (ah, bh) = (Article::find(&mut ctx, a).unwrap(), Article::find(&mut ctx, b).unwrap());
+    assert!(first.contains(&mut ctx, ah).unwrap());
+    assert!(!first.contains(&mut ctx, bh).unwrap());
+    assert!(!first.clone().limit(0).contains(&mut ctx, ah).unwrap());
+}

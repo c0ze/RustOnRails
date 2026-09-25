@@ -208,6 +208,11 @@ impl<M: Model> Relation<M> {
     /// query on the record's id. Nil, or a record without an id, is false.
     pub fn contains(&self, ctx: &mut Ctx, record: impl Into<Option<Handle<M>>>) -> Result<bool> {
         let Some(id) = record.into().and_then(|record| ctx[record].id()) else { return Ok(false) };
+        // Like Rails, a limited relation is loaded and searched: filtering by
+        // the id first would change which rows the limit keeps.
+        if self.limit.is_some() {
+            return Ok(self.fetch(ctx)?.iter().any(|row| row.id() == Some(id)));
+        }
         self.clone().where_eq("id", id).exists(ctx)
     }
 
