@@ -168,7 +168,7 @@ macro_rules! model {
 
             fn cast_query(column: &str, value: $crate::Value) -> $crate::Value {
                 match column {
-                    $(stringify!($field) => <$ty as $crate::FromValue>::serialize(value).map_or($crate::Value::Nil, $crate::Value::from),)*
+                    $(stringify!($field) => <$ty as $crate::FromValue>::query(value),)*
                     _ => value,
                 }
             }

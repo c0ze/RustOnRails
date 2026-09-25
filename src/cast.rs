@@ -16,6 +16,15 @@ pub trait FromValue: Sized {
     fn serialize(value: Value) -> Option<Self> {
         Self::from_value(value).ok().flatten()
     }
+
+    /// What `where` binds for a column of this type: `serialize`'s value,
+    /// or nil.
+    fn query(value: Value) -> Value
+    where
+        Self: Into<Value>,
+    {
+        Self::serialize(value).map_or(Value::Nil, Into::into)
+    }
 }
 
 static LEADING_INTEGER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[+-]?\d+").expect("regex"));
@@ -102,6 +111,8 @@ impl FromValue for Time {
         match value {
             Value::Nil => Ok(None),
             Value::Time(t) => Ok(Some(t)),
+            // Active Model casts a Date to its midnight.
+            Value::Date(d) => Ok(Some(d.and_time(chrono::NaiveTime::MIN))),
             Value::Str(s) => Ok(parse_time(s.trim())),
             other => Err(Error::Cast { expected: "datetime", value: other }),
         }
@@ -136,6 +147,17 @@ impl FromValue for Date {
             Value::Time(t) => Ok(Some(t.date())),
             Value::Str(s) => parse_date(&s),
             other => Err(Error::Cast { expected: "date", value: other }),
+        }
+    }
+
+    /// A string in a format only `Date._parse` reads stays a string, so
+    /// binding it to the date column fails: Rails would find a date there,
+    /// and nil would match the NULL rows instead.
+    fn query(value: Value) -> Value {
+        match Self::from_value(value.clone()) {
+            Ok(date) => date.map_or(Value::Nil, Value::Date),
+            Err(_) if matches!(value, Value::Str(_)) => value,
+            Err(_) => Value::Nil,
         }
     }
 }

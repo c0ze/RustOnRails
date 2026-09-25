@@ -107,3 +107,23 @@ fn test_today() {
     let local = Local::now().date_naive();
     assert!(local_today() == local || local_today() == Local::now().date_naive());
 }
+
+/// A query value in a date format Rails parses and this doesn't
+/// ("2026/09/25") fails at the bind instead of matching the NULL rows.
+#[test]
+fn test_a_query_date_this_cannot_read_fails() {
+    let mut ctx = ctx();
+    ctx.execute("INSERT INTO dues (title, due_on) VALUES ('none', NULL), ('due', '2026-09-25')", &[]).unwrap();
+    assert!(Due::all().where_eq("due_on", "2026/09/25").load(&mut ctx).is_err());
+    assert_eq!(1, Due::all().where_eq("due_on", "2026-09-25").load(&mut ctx).unwrap().len());
+    assert_eq!(1, Due::all().where_eq("due_on", Value::Nil).load(&mut ctx).unwrap().len());
+}
+
+/// `where(created_at: Date.current..)`: a Date against a datetime column is
+/// its midnight, as Active Model casts it.
+#[test]
+fn test_a_date_casts_to_midnight_for_a_datetime() {
+    let midnight = date(2026, 9, 25).and_hms_opt(0, 0, 0).unwrap();
+    assert_eq!(Some(midnight), rustonrails::Time::from_value(Value::Date(date(2026, 9, 25))).unwrap());
+    assert_eq!(Some(midnight), <rustonrails::Time as FromValue>::serialize(Value::Date(date(2026, 9, 25))));
+}
