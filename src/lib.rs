@@ -34,7 +34,7 @@ pub use http::server;
 pub use json::{AsJson, errors_json, format_time, value_json};
 pub use records::Handle;
 pub use model::{Attributes, Model, Record};
-pub use relation::Relation;
+pub use relation::{InnerJoin, Joinable, Relation, sanitize_sql_like};
 pub use support::{Blank, RubyString};
 pub use validation::Errors;
 pub use value::{Time, Value, now};

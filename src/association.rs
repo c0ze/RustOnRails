@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{Ctx, Handle, Model, Relation, Result, Value};
+use crate::{Ctx, Handle, InnerJoin, Joinable, Model, Relation, Result, Value};
 
 /// Loads an association for many owners at once, for `includes`.
 pub trait Preload<M>: Sync {
@@ -74,6 +74,13 @@ impl<M: Model, T: Model> Preload<M> for BelongsTo<M, T> {
     }
 }
 
+impl<M: Model, T: Model> Joinable for BelongsTo<M, T> {
+    /// From a post, `joins(:user)`: `INNER JOIN users ON users.id = posts.user_id`.
+    fn inner_join(&self) -> InnerJoin {
+        InnerJoin { table: T::TABLE, column: "id", other: M::TABLE, other_column: self.foreign_key }
+    }
+}
+
 /// `has_many :comments`, declared as a constant on the owner model.
 /// `inverse` is the child's `belongs_to` back to the owner, which Rails
 /// works out on its own for conventional names; its type ties it to this
@@ -118,6 +125,13 @@ impl<M: Model, T: Model> HasMany<M, T> {
             ctx.destroy_bang(child)?;
         }
         Ok(())
+    }
+}
+
+impl<M: Model, T: Model> Joinable for HasMany<M, T> {
+    /// From a post, `joins(:comments)`: `INNER JOIN comments ON comments.post_id = posts.id`.
+    fn inner_join(&self) -> InnerJoin {
+        InnerJoin { table: T::TABLE, column: self.foreign_key, other: M::TABLE, other_column: "id" }
     }
 }
 
