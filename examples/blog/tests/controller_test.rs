@@ -3,7 +3,9 @@ mod support;
 
 use fixtures::Fixtures;
 use blog::models::Post;
-use rustonrails::{AsJson, Controller, Error, Handle, Json, Model, Record, Request, Response, Result, Router, action, json, status};
+use rustonrails::{
+    AsJson, Controller, Error, Handle, Json, Model, Record, RecordInvalid, Request, Response, Result, Router, action, errors_json, json, status,
+};
 
 #[derive(Default)]
 struct PostsController {
@@ -25,9 +27,11 @@ impl Controller for PostsController {
         Ok(Some(Response::json(401, json!({"error": "halted"}))))
     }
 
-    fn rescue(&mut self, _req: &mut Request, error: Error) -> Result<Response> {
+    fn rescue(&mut self, req: &mut Request, error: Error) -> Result<Response> {
         match error {
             Error::RecordNotFound { .. } => Ok(Response::json(status::NOT_FOUND, json!({"error": "not found"}))),
+            // rescue_from ActiveRecord::RecordInvalid, with: :invalid
+            Error::RecordInvalid(error) => invalid(req, error),
             other => Err(other),
         }
     }
@@ -55,8 +59,16 @@ impl PostsController {
         if req.ctx.save(post)? {
             Ok(Response::json(status::CREATED, AsJson::<Post>::new().render(&mut req.ctx, post)?))
         } else {
-            Ok(Response::json(status::UNPROCESSABLE_CONTENT, rustonrails::errors_json(req.ctx.errors(post))))
+            Ok(Response::json(status::UNPROCESSABLE_CONTENT, errors_json(req.ctx.errors(post))))
         }
+    }
+
+    /// `Post.create!(post_params)`, leaving the failure to rescue_from.
+    fn create_bang(&mut self, req: &mut Request) -> Result<Response> {
+        let attributes = req.params.expect("post", &["user_id", "title", "status"])?;
+        let post = req.ctx.build(Post::from_attributes(&attributes)?);
+        req.ctx.save_bang(post)?;
+        Ok(Response::json(status::CREATED, AsJson::<Post>::new().render(&mut req.ctx, post)?))
     }
 
     fn explode(&mut self, _req: &mut Request) -> Result<Response> {
@@ -64,10 +76,16 @@ impl PostsController {
     }
 }
 
+/// `def invalid(error) = render json: error.record.errors, status: :unprocessable_content`
+fn invalid(_req: &mut Request, error: RecordInvalid) -> Result<Response> {
+    Ok(Response::json(status::UNPROCESSABLE_CONTENT, errors_json(&error.errors)))
+}
+
 fn router() -> Router {
     Router::new()
         .get("/posts(.:format)", action("index", PostsController::index))
         .post("/posts(.:format)", action("create", PostsController::create))
+        .post("/strict_posts(.:format)", action("create_bang", PostsController::create_bang))
         .get("/explode", action("explode", PostsController::explode))
         .get("/posts/:id(.:format)", action("show", PostsController::show))
 }
@@ -112,6 +130,13 @@ fn test_unwrapped_json_is_wrapped_for_expect() {
 fn test_invalid_create_renders_errors() {
     let (ctx, fx) = setup();
     let mut req = Request::new(ctx, "POST", "/posts").with_json(json!({"user_id": fx.alice, "title": ""}));
+    assert_eq!((422, json!({"title": ["can't be blank"]})), send(&mut req));
+}
+
+#[test]
+fn test_a_rescue_handler_renders_the_invalid_records_errors() {
+    let (ctx, fx) = setup();
+    let mut req = Request::new(ctx, "POST", "/strict_posts").with_json(json!({"post": {"user_id": fx.alice, "title": ""}}));
     assert_eq!((422, json!({"title": ["can't be blank"]})), send(&mut req));
 }
 

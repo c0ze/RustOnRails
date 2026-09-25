@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::LazyLock;
 
-use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, model, now};
+use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, errors_json, model, now};
 
 model! {
     pub struct Person in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
@@ -147,6 +147,17 @@ fn test_invalid_save_returns_false_and_bang_raises() {
     let created = Person::create(&mut ctx, Person::new_record()).unwrap();
     assert!(ctx.is_new_record(created));
     assert!(matches!(Person::create_bang(&mut ctx, Person::new_record()), Err(Error::RecordInvalid { .. })));
+}
+
+/// `error.record.errors` in a rescue handler: RecordInvalid carries them.
+#[test]
+fn test_record_invalid_carries_the_errors() {
+    let mut ctx = support::ctx();
+    let nameless = ctx.build(Person::new_record());
+    let Err(Error::RecordInvalid(invalid)) = ctx.save_bang(nameless) else { panic!("expected RecordInvalid") };
+    assert_eq!("Person", invalid.model);
+    assert_eq!(ctx.errors(nameless), &invalid.errors);
+    assert_eq!(r#"{"name":["can't be blank"]}"#, errors_json(&invalid.errors).to_string());
 }
 
 #[test]

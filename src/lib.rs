@@ -29,7 +29,7 @@ pub use association::{BelongsTo, HasMany, HasManyThrough, Preload};
 pub use behavior::{Behavior, Check, Cond, Event, Hook};
 pub use cast::FromValue;
 pub use ctx::Ctx;
-pub use error::{Error, Result};
+pub use error::{Error, RecordInvalid, Result};
 pub use http::{Action, Constraint, Controller, Handler, Params, Request, Response, Router, action, error_page, error_response, health, parse_query, reason, status};
 pub use http::server;
 pub use json::{AsJson, errors_json, format_date, format_time, value_json};

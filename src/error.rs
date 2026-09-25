@@ -1,16 +1,24 @@
 use std::fmt;
 
-use crate::Value;
+use crate::{Errors, Value};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// `ActiveRecord::RecordInvalid`, from the bang methods: the invalid
+/// record's model and its errors, which a `rescue_from` handler taking the
+/// exception renders as `error.record.errors`.
+#[derive(Debug)]
+pub struct RecordInvalid {
+    pub model: &'static str,
+    pub errors: Errors,
+}
 
 /// What the record layer raises where Rails would raise an exception.
 #[derive(Debug)]
 pub enum Error {
     /// `ActiveRecord::RecordNotFound`
     RecordNotFound { model: &'static str, conditions: Option<String> },
-    /// `ActiveRecord::RecordInvalid`, from the bang methods.
-    RecordInvalid { model: &'static str, messages: Vec<String> },
+    RecordInvalid(RecordInvalid),
     /// `ActiveRecord::RecordNotSaved`: a callback stopped `save!`.
     RecordNotSaved { model: &'static str },
     /// `ActiveRecord::RecordNotDestroyed`: a callback stopped `destroy!`.
@@ -37,7 +45,7 @@ impl fmt::Display for Error {
         match self {
             Error::RecordNotFound { model, conditions: Some(c) } => write!(f, "Couldn't find {model} with {c}"),
             Error::RecordNotFound { model, conditions: None } => write!(f, "Couldn't find {model}"),
-            Error::RecordInvalid { messages, .. } => write!(f, "Validation failed: {}", messages.join(", ")),
+            Error::RecordInvalid(invalid) => write!(f, "Validation failed: {}", invalid.errors.full_messages().join(", ")),
             Error::RecordNotSaved { .. } => write!(f, "Failed to save the record"),
             Error::RecordNotDestroyed { model } => write!(f, "Failed to destroy {model}"),
             Error::Abort => write!(f, "callback chain aborted"),

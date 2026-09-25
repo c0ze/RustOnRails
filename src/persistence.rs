@@ -1,4 +1,4 @@
-use crate::{BeforeTypeCast, Ctx, Error, Event, Handle, Model, Record, Result, Value, now, validation, write};
+use crate::{BeforeTypeCast, Ctx, Error, Event, Handle, Model, Record, RecordInvalid, Result, Value, now, validation, write};
 
 impl Ctx {
     /// `valid?`: runs the validation callbacks and the validations,
@@ -38,11 +38,11 @@ impl Ctx {
         if self.save(record)? {
             return Ok(());
         }
-        let messages = self.errors(record).full_messages();
-        if messages.is_empty() {
+        let errors = self.errors(record).clone();
+        if errors.is_empty() {
             Err(Error::RecordNotSaved { model: M::NAME })
         } else {
-            Err(Error::RecordInvalid { model: M::NAME, messages })
+            Err(Error::RecordInvalid(RecordInvalid { model: M::NAME, errors }))
         }
     }
 
