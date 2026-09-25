@@ -1,6 +1,6 @@
 //! `has_secure_token`: a random token for each new record.
 
-use crate::{Behavior, Blank, Ctx, Handle, Model, Record, Result, Value};
+use crate::{Behavior, Blank, Ctx, Handle, Model, Result, Value};
 
 /// ActiveSupport's `SecureRandom::BASE58_ALPHABET`: digits and letters
 /// without 0, O, I and l.
@@ -31,17 +31,36 @@ impl<M> Behavior<M> {
     }
 }
 
-/// The token callback's body: only a new record, and only when the
-/// attribute is blank, as `query_attribute` reads a String.
-pub(crate) fn fill<M: Record>(record: &mut M, attribute: &str, length: usize) -> Result<()> {
+/// The token callback's body: only when the attribute is blank, as
+/// `query_attribute` reads a String. Rails assigns through the attribute
+/// writer, so a normalizer on the attribute applies.
+pub(crate) fn fill<M: Model>(record: &mut M, attribute: &str, length: usize) -> Result<()> {
     let blank = match record.get(attribute) {
         Value::Str(s) => s.is_blank(),
         other => other.is_nil(),
     };
-    if blank { record.set(attribute, Value::Str(base58(length))) } else { Ok(()) }
+    if !blank {
+        return Ok(());
+    }
+    record.set(attribute, M::behavior().normalize(attribute, Value::Str(base58(length))))
 }
 
 impl Ctx {
+    /// Rails runs after_initialize once `new` has assigned every attribute.
+    /// `build` fills the tokens of a record built with its attributes;
+    /// generated code that writes attributes onto a built record one by one
+    /// (`User.create!(api_token: nil, ...)`) calls this after the writes, so
+    /// a token they left blank is filled.
+    pub fn fill_secure_tokens<M: Model>(&mut self, record: Handle<M>) -> Result<()> {
+        if !self.is_new_record(record) {
+            return Ok(());
+        }
+        for (attribute, length) in &M::behavior().tokens {
+            fill(&mut self[record], attribute, *length)?;
+        }
+        Ok(())
+    }
+
     /// `has_secure_token ..., on: :create`: a before_create hook, which
     /// generated code declares as
     /// `.before_create(|ctx, user| ctx.fill_secure_token(user, "api_token", 24))`.

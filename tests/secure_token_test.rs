@@ -8,12 +8,20 @@ model! {
     pub struct Account in "accounts" { id: i64, name: String, api_token: String, invite: String, created_at: Time, updated_at: Time }
 }
 
+impl Account {
+    // normalizes :api_token, with: ->(token) { "tok_#{token}" }
+    fn normalize_api_token(token: String) -> String {
+        format!("tok_{token}")
+    }
+}
+
 // `has_secure_token :api_token` (on: :initialize) and
 // `has_secure_token :invite, length: 30, on: :create`.
 impl Model for Account {
     fn behavior() -> &'static Behavior<Self> {
         static BEHAVIOR: LazyLock<Behavior<Account>> = LazyLock::new(|| {
             Behavior::<Account>::new()
+                .normalizes("api_token", Account::normalize_api_token)
                 .has_secure_token("api_token", 24)
                 .before_create(|ctx, account| ctx.fill_secure_token(account, "invite", 30))
         });
@@ -56,18 +64,43 @@ fn test_base58_draws_from_rails_alphabet() {
 fn test_a_token_is_generated_when_the_record_is_built() {
     let mut ctx = ctx();
     let fresh = ctx.build(Account::from_attributes(&[("name".into(), Value::from("ann"))]).unwrap());
+    // Through the attribute writer, so the normalizer applies.
     let token = ctx[fresh].api_token.clone().unwrap();
-    assert_eq!(24, token.len());
+    assert!(token.starts_with("tok_") && token.len() == 28, "{token}");
     let given = ctx.build(Account::from_attributes(&[("api_token".into(), Value::from("mine"))]).unwrap());
-    assert_eq!(Some("mine"), ctx[given].api_token.as_deref());
+    assert_eq!(Some("tok_mine"), ctx[given].api_token.as_deref());
+    // Normalized before the token check, so no longer blank, as in Rails.
     let blank = ctx.build(Account::from_attributes(&[("api_token".into(), Value::from(" \t"))]).unwrap());
-    assert_eq!(24, ctx[blank].api_token.as_ref().unwrap().len());
+    assert_eq!(Some("tok_ \t"), ctx[blank].api_token.as_deref());
 
     // Saving keeps it; a loaded record is never given a new one.
     ctx.save_bang(fresh).unwrap();
     let id = ctx[fresh].id.unwrap();
     let loaded = Account::find(&mut ctx, id).unwrap();
     assert_eq!(Some(token), ctx[loaded].api_token.clone());
+}
+
+/// `Account.create!(api_token: nil)` writes onto a built record; the token
+/// it blanks is filled again, as Rails' after_initialize runs after it.
+#[test]
+fn test_tokens_are_filled_again_after_attribute_writes() {
+    let mut ctx = ctx();
+    let account = ctx.build(Account::new_record());
+    let first = ctx[account].api_token.clone();
+    ctx[account].api_token = None;
+    ctx.fill_secure_tokens(account).unwrap();
+    assert!(ctx[account].api_token.as_ref().is_some_and(|t| t.len() == 28));
+    assert_ne!(first, ctx[account].api_token);
+    ctx[account].api_token = Some(" \t".into());
+    ctx.fill_secure_tokens(account).unwrap();
+    assert_eq!(28, ctx[account].api_token.as_ref().unwrap().len(), "blank, as query_attribute reads it");
+    ctx[account].api_token = Some("kept".into());
+    ctx.fill_secure_tokens(account).unwrap();
+    assert_eq!(Some("kept"), ctx[account].api_token.as_deref());
+    ctx.save_bang(account).unwrap();
+    ctx[account].api_token = None;
+    ctx.fill_secure_tokens(account).unwrap();
+    assert_eq!(None, ctx[account].api_token, "a saved record isn't initialized again");
 }
 
 /// on: :create: nothing until the INSERT, then only when blank.
