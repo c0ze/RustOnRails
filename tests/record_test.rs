@@ -75,6 +75,23 @@ fn test_changed_compares_with_defaults_for_new_records() {
     assert!(ctx.attribute_changed(note, "title"));
 }
 
+/// Active Model's numeric types count a number replaced by a string that
+/// doesn't start like one as a change, though both cast to 0.
+#[test]
+fn test_a_non_numeric_string_over_a_number_is_a_change() {
+    let mut ctx = support::ctx();
+    let note = ctx.build(Note::new_record());
+    ctx.assign(note, &[("comments_count".into(), Value::from("abc"))]).unwrap();
+    assert_eq!(Some(0), ctx[note].comments_count);
+    assert!(ctx.attribute_changed(note, "comments_count"));
+    for same in [Value::from(" 0"), Value::from("-0x"), Value::Int(0), Value::Float(0.0)] {
+        ctx.assign(note, &[("comments_count".into(), same.clone())]).unwrap();
+        assert!(!ctx.attribute_changed(note, "comments_count"), "{same:?}");
+    }
+    ctx.assign(note, &[("comments_count".into(), Value::Bool(false))]).unwrap();
+    assert!(ctx.attribute_changed(note, "comments_count"));
+}
+
 #[test]
 fn test_errors_keep_order_and_humanize() {
     let mut ctx = support::ctx();

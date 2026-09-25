@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::LazyLock;
 
-use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, model};
+use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, model, now};
 
 model! {
     pub struct Person in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
@@ -50,6 +50,34 @@ impl Model for Loose {
         static BEHAVIOR: LazyLock<Behavior<Loose>> =
             LazyLock::new(|| Behavior::<Loose>::new().enumeration("status", &[("draft", 0), ("published", 1)], false));
         &BEHAVIOR
+    }
+}
+
+// `before_save :stamp, if: :will_save_change_to_status?`, as Rutile compiles it.
+model! {
+    pub struct Stamped in "posts" {
+        id: i64, user_id: i64, title: String, status: String = "draft", published_at: Time, created_at: Time, updated_at: Time,
+    }
+}
+
+impl Model for Stamped {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Stamped>> = LazyLock::new(|| {
+            Behavior::<Stamped>::new()
+                .enumeration("status", &[("draft", 0), ("published", 1)], true)
+                .before_save(|ctx, post| {
+                    ctx[post].published_at = ctx[post].is_published().then(now);
+                    Ok(())
+                })
+                .when(|ctx, post| ctx.attribute_changed(post, "status"))
+        });
+        &BEHAVIOR
+    }
+}
+
+impl Stamped {
+    fn is_published(&self) -> bool {
+        self.status.as_deref() == Some("published")
     }
 }
 
@@ -151,6 +179,24 @@ fn test_timestamps_survive_reload() {
     let id = ctx[person].id.unwrap();
     let found = Person::find(&mut ctx, id).unwrap();
     assert_eq!(ctx[person].created_at, ctx[found].created_at);
+}
+
+/// `will_save_change_to_status?`: a new record's default isn't a change,
+/// an assigned value is until it's saved.
+#[test]
+fn test_a_callback_on_will_save_change_to() {
+    let mut ctx = support::ctx();
+    let owner = Plain::create_bang(&mut ctx, Plain { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Plain::new_record() }).unwrap();
+    let long_ago = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap().and_hms_opt(0, 0, 0);
+    let post = Stamped { user_id: ctx[owner].id, title: Some("t".into()), published_at: long_ago, ..Stamped::new_record() };
+    let post = Stamped::create_bang(&mut ctx, post).unwrap();
+    assert_eq!(long_ago, ctx[post].published_at);
+    ctx.update_bang(post, |p| p.status = Some("published".into())).unwrap();
+    let stamped = ctx[post].published_at;
+    assert!(stamped > long_ago);
+    assert!(!ctx.attribute_changed(post, "status"));
+    ctx.update_bang(post, |p| p.published_at = long_ago).unwrap();
+    assert_eq!(long_ago, ctx[post].published_at);
 }
 
 #[test]

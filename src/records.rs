@@ -2,8 +2,10 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
+use std::sync::LazyLock;
 
 use postgres::Row;
+use regex::Regex;
 
 use crate::{Ctx, Errors, Model, Result, Value, pg};
 
@@ -125,7 +127,14 @@ impl Ctx {
     pub fn changed<M: Model>(&self, record: Handle<M>) -> Vec<&'static str> {
         let slot = self.slot(record);
         let base = slot.saved.clone().unwrap_or_else(M::new_record);
-        M::COLUMNS.iter().copied().filter(|c| base.get(c) != slot.record.get(c)).collect()
+        M::COLUMNS
+            .iter()
+            .copied()
+            .filter(|c| {
+                let (old, new) = (base.get(c), slot.record.get(c));
+                old != new || number_to_non_number(&old, &new, slot.record.before_type_cast().given(c, &new))
+            })
+            .collect()
     }
 
     /// `attribute_changed?(column)`
@@ -160,6 +169,20 @@ impl<M: Model> IndexMut<Handle<M>> for Ctx {
     fn index_mut(&mut self, record: Handle<M>) -> &mut M {
         &mut self.slot_mut(record).record
     }
+}
+
+/// Ruby's `/\A\s*[+-]?\d/`, with Ruby's ASCII `\s` and `\d`.
+static NUMERIC_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t\r\n\x0b\x0c]*[+-]?[0-9]").expect("regex"));
+
+/// Active Model's numeric types also count as changed a number given a
+/// value that doesn't start like one ("abc", false), though both cast to 0.
+fn number_to_non_number(old: &Value, new: &Value, given: Option<&Value>) -> bool {
+    let non_number = match given {
+        Some(Value::Str(s)) => !NUMERIC_START.is_match(s),
+        Some(Value::Bool(_)) => true,
+        _ => false,
+    };
+    matches!(new, Value::Int(_) | Value::Float(_)) && !old.is_nil() && non_number
 }
 
 /// Builds a record from a row, turning enum integers back into labels.
