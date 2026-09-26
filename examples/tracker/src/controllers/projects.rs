@@ -156,14 +156,14 @@ impl ProjectsController {
         self.project = Some(
             User::PROJECTS
                 .of(&req.ctx, current_user)
-                .find(&mut req.ctx, req.params.value("id"))?,
+                .find(&mut req.ctx, req.params.value("id")?)?,
         );
         Ok(())
     }
 
     // app/controllers/application_controller.rb:24
     fn page(&mut self, req: &mut Request) -> Result<i64> {
-        Ok(i64::max(req.params.fetch("page", 1).to_i()?, 1))
+        Ok(i64::max(req.params.fetch("page", 1)?.to_i()?, 1))
     }
 
     // app/controllers/projects_controller.rb:41

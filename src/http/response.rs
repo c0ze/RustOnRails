@@ -1,5 +1,7 @@
 use serde_json::{Value as Json, json};
 
+use crate::{Value, value_json};
+
 /// Rails' status symbols used by the PoC.
 pub mod status {
     pub const OK: u16 = 200;
@@ -21,6 +23,16 @@ impl Response {
     /// `render json: value, status: status`
     pub fn json(status: u16, value: Json) -> Self {
         Self { status, content_type: Some("application/json; charset=utf-8"), body: value.to_string().into_bytes() }
+    }
+
+    /// `render json: value` with a param's or the fallback's Value: a
+    /// String is the body as it is (Rails calls to_json on anything but a
+    /// String), anything else its JSON.
+    pub fn json_value(status: u16, value: Value) -> Self {
+        match value {
+            Value::Str(text) => Self { status, content_type: Some("application/json; charset=utf-8"), body: text.into_bytes() },
+            other => Self::json(status, value_json(other)),
+        }
     }
 
     /// `head status`

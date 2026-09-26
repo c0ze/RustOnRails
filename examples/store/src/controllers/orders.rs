@@ -86,12 +86,12 @@ impl OrdersController {
 
     // app/controllers/orders_controller.rb:13
     pub fn add_item(&mut self, req: &mut Request) -> Result<Response> {
-        let product = Product::find(&mut req.ctx, req.params.value("product_id"))?;
+        let product = Product::find(&mut req.ctx, req.params.value("product_id")?)?;
         let item = Order::add_item(
             &mut req.ctx,
             self.order.ok_or(Error::Nil { what: "add_item" })?,
             product,
-            req.params.fetch("quantity", 1).to_i()?,
+            req.params.fetch("quantity", 1)?.to_i()?,
         )?;
         Ok(Response::json(
             status::CREATED,
@@ -183,7 +183,7 @@ impl OrdersController {
 
     // app/controllers/orders_controller.rb:53
     fn set_order(&mut self, req: &mut Request) -> Result<()> {
-        self.order = Some(Order::find(&mut req.ctx, req.params.value("id"))?);
+        self.order = Some(Order::find(&mut req.ctx, req.params.value("id")?)?);
         Ok(())
     }
 

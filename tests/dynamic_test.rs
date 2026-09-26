@@ -132,3 +132,40 @@ fn test_division_and_modulo() {
     assert_eq!("String can't be coerced into Integer", message(int(7).div(&s("a"))));
     assert_eq!("nil can't be coerced into Integer", message(int(7).modulo(&Value::Nil)));
 }
+
+/// Active Support compares a Time with a Date as the Date's midnight.
+#[test]
+fn test_time_against_date() {
+    let d = chrono::NaiveDate::from_ymd_opt(2026, 9, 26).unwrap();
+    let midnight = Value::Time(d.and_hms_opt(0, 0, 0).unwrap());
+    let noon = Value::Time(d.and_hms_opt(12, 0, 0).unwrap());
+    assert!(noon.compare(">", &Value::Date(d)).unwrap());
+    assert!(Value::Date(d).compare("<", &noon).unwrap());
+    assert!(!midnight.compare(">", &Value::Date(d)).unwrap());
+    assert!(midnight.equals(&Value::Date(d)) && Value::Date(d).equals(&midnight));
+    assert!(!noon.equals(&Value::Date(d)));
+}
+
+/// Where Ruby's Date and Time go further than chrono's, an error, not a panic.
+#[test]
+fn test_dates_and_times_out_of_range() {
+    let d = Value::Date(rustonrails::today());
+    assert_eq!("time out of range", message(d.add(&int(100_000_000))));
+    assert_eq!("time out of range", message(d.sub(&int(i64::MAX))));
+    let t = Value::Time(rustonrails::now());
+    assert_eq!("time out of range", message(t.add(&float(9e12))));
+    assert_eq!("time out of range", message(t.add(&int(i64::MAX / 1_000_000))));
+}
+
+#[test]
+fn test_repeating_a_string_by_a_float_that_isnt_a_number() {
+    assert_eq!("NaN", message(s("ab").mul(&float(f64::NAN))));
+    assert_eq!("Infinity", message(s("ab").mul(&float(f64::INFINITY))));
+    assert_eq!(s("abab"), s("ab").mul(&float(2.5)).unwrap());
+}
+
+#[test]
+fn test_negative_zero_keeps_its_sign() {
+    assert_eq!("-0.0", float(-0.0).to_s());
+    assert_eq!("0.0", float(0.0).to_s());
+}

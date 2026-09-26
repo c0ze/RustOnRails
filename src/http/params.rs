@@ -22,15 +22,16 @@ impl Params {
         self.0.get(key)
     }
 
-    /// `params[:id]` as a scalar; nested hashes and arrays are nil.
-    pub fn value(&self, key: &str) -> Value {
-        self.get(key).map_or(Value::Nil, scalar)
+    /// `params[:id]`: nil when it isn't there. A nested hash or an array
+    /// is an error: a Value doesn't hold one, and nil would be a lie.
+    pub fn value(&self, key: &str) -> Result<Value> {
+        self.get(key).map_or(Ok(Value::Nil), |value| scalar_at(key, value))
     }
 
     /// `params.fetch(:page, 1)`: the value when the key is there (a null
     /// too, as Rails' fetch), `default` when it isn't.
-    pub fn fetch(&self, key: &str, default: impl Into<Value>) -> Value {
-        self.get(key).map_or_else(|| default.into(), scalar)
+    pub fn fetch(&self, key: &str, default: impl Into<Value>) -> Result<Value> {
+        self.get(key).map_or_else(|| Ok(default.into()), |value| scalar_at(key, value))
     }
 
     /// `params.require(:user)`: the nested hash, or `ParameterMissing` when
@@ -70,6 +71,14 @@ impl Params {
             body.iter().filter(|(k, _)| include.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
         self.0.insert(name.to_string(), Json::Object(wrapped));
     }
+}
+
+fn scalar_at(key: &str, value: &Json) -> Result<Value> {
+    if value.is_array() || value.is_object() {
+        let what = if value.is_array() { "an array" } else { "a hash" };
+        return Err(Error::Type { message: format!("params[:{key}] is {what}, which a Value can't hold") });
+    }
+    Ok(scalar(value))
 }
 
 fn scalar(value: &Json) -> Value {

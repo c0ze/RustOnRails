@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 
-use chrono::{Duration, TimeDelta};
+use chrono::{Duration, NaiveTime, TimeDelta};
 
 use crate::cast::ruby_float;
 use crate::json::format_date;
@@ -62,6 +62,7 @@ impl Value {
     pub fn equals(&self, other: &Value) -> bool {
         match (self, other) {
             (Value::Int(a), Value::Float(b)) | (Value::Float(b), Value::Int(a)) => int_float(*a, *b) == Some(Ordering::Equal),
+            (Value::Time(t), Value::Date(d)) | (Value::Date(d), Value::Time(t)) => *t == d.and_time(NaiveTime::MIN),
             (a, b) => a == b,
         }
     }
@@ -77,6 +78,9 @@ impl Value {
             (Value::Str(a), Value::Str(b)) => Some(a.as_bytes().cmp(b.as_bytes())),
             (Value::Time(a), Value::Time(b)) => Some(a.cmp(b)),
             (Value::Date(a), Value::Date(b)) => Some(a.cmp(b)),
+            // Active Support compares a Date with a Time as its midnight.
+            (Value::Time(a), Value::Date(b)) => Some(a.cmp(&b.and_time(NaiveTime::MIN))),
+            (Value::Date(a), Value::Time(b)) => Some(a.and_time(NaiveTime::MIN).cmp(b)),
             _ => {
                 let message = format!("comparison of {} with {} failed", self.class_name(), compared_name(other));
                 return Err(Error::Argument { message });
@@ -96,8 +100,8 @@ impl Value {
         match (self, other) {
             (Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
             (Value::Str(_), other) => Err(Error::Type { message: format!("no implicit conversion of {} into String", coerced_name(other)) }),
-            (Value::Time(t), Value::Int(_) | Value::Float(_)) => Ok(Value::Time(*t + seconds(other)?)),
-            (Value::Date(d), Value::Int(n)) => Ok(Value::Date(*d + Duration::days(*n))),
+            (Value::Time(t), Value::Int(_) | Value::Float(_)) => t.checked_add_signed(seconds(other)?).map(Value::Time).ok_or_else(out_of_range),
+            (Value::Date(d), Value::Int(n)) => Duration::try_days(*n).and_then(|days| d.checked_add_signed(days)).map(Value::Date).ok_or_else(out_of_range),
             _ => self.arithmetic("+", other, i64::checked_add, |a, b| a + b),
         }
     }
@@ -106,8 +110,8 @@ impl Value {
     pub fn sub(&self, other: &Value) -> Result<Value> {
         match (self, other) {
             (Value::Time(a), Value::Time(b)) => Ok(Value::Float((*a - *b).num_microseconds().unwrap_or(i64::MAX) as f64 / 1e6)),
-            (Value::Time(t), Value::Int(_) | Value::Float(_)) => Ok(Value::Time(*t - seconds(other)?)),
-            (Value::Date(d), Value::Int(n)) => Ok(Value::Date(*d - Duration::days(*n))),
+            (Value::Time(t), Value::Int(_) | Value::Float(_)) => t.checked_sub_signed(seconds(other)?).map(Value::Time).ok_or_else(out_of_range),
+            (Value::Date(d), Value::Int(n)) => Duration::try_days(*n).and_then(|days| d.checked_sub_signed(days)).map(Value::Date).ok_or_else(out_of_range),
             (Value::Str(_), _) => Err(no_method("-", self)),
             _ => self.arithmetic("-", other, i64::checked_sub, |a, b| a - b),
         }
@@ -117,6 +121,10 @@ impl Value {
     pub fn mul(&self, other: &Value) -> Result<Value> {
         let times = match (self, other) {
             (Value::Str(_), Value::Int(n)) => Some(*n),
+            // Ruby's FloatDomainError, which a Float that isn't a number raises.
+            (Value::Str(_), Value::Float(f)) if !f.is_finite() => {
+                return Err(Error::Argument { message: if f.is_nan() { "NaN" } else if *f > 0.0 { "Infinity" } else { "-Infinity" }.into() });
+            }
             (Value::Str(_), Value::Float(f)) => Some(f.trunc() as i64),
             (Value::Str(_), other) => {
                 return Err(Error::Type { message: format!("no implicit conversion of {} into Integer", coerced_name(other)) });
@@ -209,6 +217,11 @@ fn int_float(a: i64, b: f64) -> Option<Ordering> {
 }
 
 /// A time plus seconds, to the microsecond the database keeps.
+/// Past what a Date or Time here holds, which Ruby's would.
+fn out_of_range() -> Error {
+    Error::Argument { message: "time out of range".into() }
+}
+
 fn seconds(amount: &Value) -> Result<TimeDelta> {
     let micros = match amount {
         Value::Int(n) => n.checked_mul(1_000_000),

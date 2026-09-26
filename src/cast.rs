@@ -205,7 +205,8 @@ pub(crate) fn ruby_float(f: f64) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "Infinity" } else { "-Infinity" }.into();
     }
-    let sign = if f < 0.0 { "-" } else { "" };
+    // -0.0 keeps its sign, as in Ruby.
+    let sign = if f.is_sign_negative() { "-" } else { "" };
     let scientific = format!("{:e}", f.abs());
     let (mantissa, exponent) = scientific.split_once('e').expect("{:e} has an exponent");
     let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();

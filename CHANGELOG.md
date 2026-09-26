@@ -10,6 +10,13 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 
 - `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. An Integer and a Float compare exactly.
 - `div_integers`, `mod_integers` and `mod_floats` are Ruby's floor division and modulo for typed numbers.
+- `Response::json_value` is `render json:` of a Value: a String goes out as it is, as Rails sends it.
+- `Params::value` and `Params::fetch` return a `Result`. An array or a hash is an error rather than nil, since a Value holds only scalars.
+- Behaviour changes:
+  - A Time compares with a Date as the Date's midnight, as Active Support does.
+  - Date and Time arithmetic past chrono's range raises "time out of range" instead of panicking.
+  - `"ab" * NaN` raises.
+  - `-0.0` prints with its sign.
 
 ## 0.7.0
 

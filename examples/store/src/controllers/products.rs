@@ -101,7 +101,7 @@ impl ProductsController {
     // app/controllers/products_controller.rb:22
     pub fn restock(&mut self, req: &mut Request) -> Result<Response> {
         let product = self.product.ok_or(Error::Nil { what: "restock!" })?;
-        let amount = req.params.fetch("amount", 0).to_i()?;
+        let amount = req.params.fetch("amount", 0)?.to_i()?;
         let amount_2 = self.amount(req, amount)?;
         Product::restock_bang(&mut req.ctx, product, amount_2)?;
         Ok(Response::json(
@@ -146,7 +146,7 @@ impl ProductsController {
 
     // app/controllers/products_controller.rb:47
     pub fn low_stock(&mut self, req: &mut Request) -> Result<Response> {
-        let below = req.params.fetch("below", 5).to_i()?;
+        let below = req.params.fetch("below", 5)?.to_i()?;
         let records = Product::all().order_asc("name").load(&mut req.ctx)?;
         let mut selected = Vec::new();
         for product in records {
@@ -237,7 +237,7 @@ impl ProductsController {
 
     // app/controllers/products_controller.rb:82
     pub fn double(&mut self, req: &mut Request) -> Result<Response> {
-        let value = req.params.fetch("value", 1);
+        let value = req.params.fetch("value", 1)?;
         Ok(Response::json(
             status::OK,
             json!({ "value": value_json(value.clone()), "doubled": value_json(value.mul(&Value::from(2))?), "half": div_integers(value.to_i()?, 2)?, "text": format!("got {}", value.to_s()) }),
@@ -255,13 +255,13 @@ impl ProductsController {
         )?);
         Ok(Response::json(
             status::OK,
-            json!({ "id": id, "availability": availability, "tagged": value_json(Product::tag_with(&mut req.ctx, self.product.ok_or(Error::Nil { what: "tag_with" })?, req.params.value("tag"))?) }),
+            json!({ "id": id, "availability": availability, "tagged": value_json(Product::tag_with(&mut req.ctx, self.product.ok_or(Error::Nil { what: "tag_with" })?, req.params.value("tag")?)?) }),
         ))
     }
 
     // app/controllers/products_controller.rb:91
     pub fn quote(&mut self, req: &mut Request) -> Result<Response> {
-        let quantity_2 = req.params.fetch("quantity", 1).to_i()?;
+        let quantity_2 = req.params.fetch("quantity", 1)?.to_i()?;
         let quantity = self.amount(req, quantity_2)?;
         let id = req.ctx[self.product.ok_or(Error::Nil { what: "id" })?].id;
         let price_for = Product::price_for(
@@ -277,7 +277,7 @@ impl ProductsController {
 
     // app/controllers/products_controller.rb:99
     fn set_product(&mut self, req: &mut Request) -> Result<()> {
-        self.product = Some(Product::find(&mut req.ctx, req.params.value("id"))?);
+        self.product = Some(Product::find(&mut req.ctx, req.params.value("id")?)?);
         Ok(())
     }
 

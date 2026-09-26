@@ -73,11 +73,11 @@ impl TasksController {
             .of(&req.ctx, project)
             .order_asc("due_on")
             .order_asc("id");
-        if req.params.value("status").is_present() {
-            tasks = tasks.where_eq("status", req.params.value("status"));
+        if req.params.value("status")?.is_present() {
+            tasks = tasks.where_eq("status", req.params.value("status")?);
         }
-        if req.params.value("q").is_present() {
-            tasks = tasks.search(req.params.value("q").to_str()?);
+        if req.params.value("q")?.is_present() {
+            tasks = tasks.search(req.params.value("q")?.to_str()?);
         }
         let records = tasks.load(&mut req.ctx)?;
         let mut mapped = Vec::with_capacity(records.len());
@@ -160,7 +160,7 @@ impl TasksController {
         self.project = Some(
             User::PROJECTS
                 .of(&req.ctx, current_user)
-                .find(&mut req.ctx, req.params.value("project_id"))?,
+                .find(&mut req.ctx, req.params.value("project_id")?)?,
         );
         Ok(())
     }
@@ -174,7 +174,7 @@ impl TasksController {
                 "user_id",
                 req.ctx[self.current_user.ok_or(Error::Nil { what: "id" })?].id,
             );
-        self.task = Some(tasks.find(&mut req.ctx, req.params.value("id"))?);
+        self.task = Some(tasks.find(&mut req.ctx, req.params.value("id")?)?);
         Ok(())
     }
 
