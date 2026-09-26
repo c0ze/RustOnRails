@@ -77,7 +77,7 @@ pub fn read_head(reader: &mut impl BufRead) -> Result<Head, WireError> {
     };
     let parts: Vec<&str> = request_line.split(' ').collect();
     let &[method, target, version] = parts.as_slice() else { return Err(WireError::Refuse(400)) };
-    if method.is_empty() || !method.bytes().all(is_token) || !target.starts_with('/') {
+    if method.is_empty() || !method.bytes().all(is_token) || !target.starts_with('/') || target.bytes().any(|b| b.is_ascii_control()) {
         return Err(WireError::Refuse(400));
     }
     let minor_version = match version {
@@ -95,7 +95,9 @@ pub fn read_head(reader: &mut impl BufRead) -> Result<Head, WireError> {
         // A name is a token: no whitespace before the colon, and no
         // obsolete line folding (RFC 9112 5.1, 5.2).
         let Some((name, value)) = line.split_once(':') else { return Err(WireError::Refuse(400)) };
-        if name.is_empty() || !name.bytes().all(is_token) {
+        // A bare CR or other control byte in a value is how one header
+        // hides another from a proxy that splits lines differently.
+        if name.is_empty() || !name.bytes().all(is_token) || value.bytes().any(|b| b.is_ascii_control() && b != b'\t') {
             return Err(WireError::Refuse(400));
         }
         headers.push((name.to_string(), value.trim_matches([' ', '\t']).to_string()));
@@ -109,8 +111,9 @@ pub fn read_head(reader: &mut impl BufRead) -> Result<Head, WireError> {
 pub fn read_body(head: &Head, reader: &mut impl BufRead, interim: &mut impl Write, max: usize) -> Result<Vec<u8>, WireError> {
     let lengths = head.tokens("Content-Length");
     let codings = head.tokens("Transfer-Encoding");
-    // Both framings at once is how requests get smuggled (RFC 9112 6.3).
-    if !codings.is_empty() && !lengths.is_empty() {
+    // Both framings at once is how requests get smuggled (RFC 9112 6.3),
+    // and HTTP/1.0 has no Transfer-Encoding to frame a body with (6.1).
+    if !codings.is_empty() && (!lengths.is_empty() || head.minor_version == 0) {
         return Err(WireError::Refuse(400));
     }
     let chunked = match codings.as_slice() {
@@ -266,6 +269,9 @@ mod tests {
         assert_eq!(Some(WireError::Refuse(400)), head("GET http://x/ HTTP/1.1\r\n\r\n").err());
         assert_eq!(Some(WireError::Refuse(400)), head("GET / HTTP/1.1\r\nHost : x\r\n\r\n").err());
         assert_eq!(Some(WireError::Refuse(400)), head("GET / HTTP/1.1\r\nA: b\r\n folded\r\n\r\n").err());
+        assert_eq!(Some(WireError::Refuse(400)), head("GET / HTTP/1.1\r\nX: a\rContent-Length: 10\r\n\r\n").err());
+        assert_eq!(Some(WireError::Refuse(400)), head("GET /a\x1b[2K HTTP/1.1\r\n\r\n").err());
+        assert!(head("GET / HTTP/1.1\r\nX: a\tb\r\n\r\n").is_ok());
         let big = format!("GET / HTTP/1.1\r\nX: {}\r\n\r\n", "a".repeat(MAX_HEAD_BYTES));
         assert_eq!(Some(WireError::Refuse(431)), head(&big).err());
         assert_eq!(Some(WireError::Gone), head("GET / HTTP/1.1\r\nHost: x\r\n").err());
@@ -281,6 +287,8 @@ mod tests {
         assert_eq!(Err(WireError::Refuse(413)), post("Content-Length: 99999999999999999999999\r\n", ""));
         assert_eq!(Err(WireError::Gone), post("Content-Length: 5\r\n", "abc"));
         assert_eq!(Err(WireError::Refuse(501)), post("Transfer-Encoding: gzip, chunked\r\n", "0\r\n\r\n"));
+        let old = body("POST / HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+        assert_eq!(Err(WireError::Refuse(400)), old);
     }
 
     #[test]

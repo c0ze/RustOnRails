@@ -25,7 +25,8 @@ const JSON_TYPES: [&str; 3] = ["application/json", "text/x-json", "application/j
 impl Request {
     pub fn new(ctx: Ctx, method: &str, path: &str) -> Self {
         Self {
-            method: method.to_uppercase(),
+            // Methods are case-sensitive: `delete` isn't DELETE.
+            method: method.to_string(),
             path: path.to_string(),
             content_type: None,
             headers: Vec::new(),
