@@ -46,18 +46,25 @@ impl<M: Model> Relation<M> {
             let (column, op, value) = match filter {
                 Filter::In(column, values) => {
                     let target = format!("{table}.{}", quote(column));
-                    let cast: Vec<Value> = values
+                    let (nils, cast): (Vec<Value>, Vec<Value>) = values
                         .iter()
                         .map(|v| M::behavior().query_value(column, M::cast_query(column, v.clone())))
-                        .filter(|v| !v.is_nil())
-                        .collect();
-                    if cast.is_empty() {
-                        sql.push_str("1=0");
-                    } else {
+                        .partition(Value::is_nil);
+                    // Rails: `x IN (...)`, `OR x IS NULL` when the list holds nil.
+                    let mut any = Vec::new();
+                    if !cast.is_empty() {
                         let start = params.len();
                         params.extend(cast);
                         let marks: Vec<String> = (start + 1..=params.len()).map(|i| format!("${i}")).collect();
-                        sql.push_str(&format!("{target} IN ({})", marks.join(", ")));
+                        any.push(format!("{target} IN ({})", marks.join(", ")));
+                    }
+                    if !nils.is_empty() {
+                        any.push(format!("{target} IS NULL"));
+                    }
+                    match any.as_slice() {
+                        [] => sql.push_str("1=0"),
+                        [one] => sql.push_str(one),
+                        _ => sql.push_str(&format!("({})", any.join(" OR "))),
                     }
                     continue;
                 }

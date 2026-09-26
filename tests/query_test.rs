@@ -188,3 +188,19 @@ fn test_fragment_binds_are_quoted_literals() {
     assert_eq!(vec![quoted, slash], find(&mut ctx, "comments_count-? > 0 AND created_at <= ?", vec![Value::Int(-1), now().into()]));
     assert_eq!(vec![quoted, slash], find(&mut ctx, "comments_count < ? AND (1 = 1) = ?", vec![0.5.into(), true.into()]));
 }
+
+/// `where(title: ["a", nil])`: Rails writes `IN` and `OR ... IS NULL`, so the
+/// NULL rows come back too; `[nil]` alone is `IS NULL`.
+#[test]
+fn test_where_in_with_nil_matches_null_rows() {
+    let mut ctx = support::ctx();
+    let ann = author(&mut ctx, "ann");
+    article(&mut ctx, ann, "a");
+    article(&mut ctx, ann, "b");
+    ctx.execute("UPDATE posts SET body = NULL WHERE title = 'b'", &[]).unwrap();
+    let count = |ctx: &mut rustonrails::Ctx, values: Vec<Value>| Article::all().where_in("body", values).count(ctx).unwrap();
+    assert_eq!(2, count(&mut ctx, vec!["b".into(), Value::Nil]));
+    assert_eq!(1, count(&mut ctx, vec![Value::Nil]));
+    assert_eq!(1, count(&mut ctx, vec!["b".into()]));
+    assert_eq!(0, count(&mut ctx, vec![]));
+}
