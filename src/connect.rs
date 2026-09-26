@@ -59,26 +59,31 @@ enum Roots {
 /// (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`)
 /// and an `sslrootcert`: a PEM file of CA certificates, or `system`.
 pub(crate) fn connect(url: &str) -> Result<Client> {
-    let (url, tls) = take_tls(url)?;
+    let (url, mut tls) = take_tls(url)?;
+    let mut config: postgres::Config = url.parse()?;
+    adopt(&mut tls, config.get_ssl_mode());
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let (mode, roots) = settle(&tls, home.as_deref())?;
-    let mut config: postgres::Config = url.parse()?;
-    if let Some(driver) = driver_mode(&tls, mode, &roots) {
-        config.ssl_mode(driver);
-    }
-    Ok(config.connect(connector(mode, &roots)?)?)
-}
-
-/// The mode to hand the driver, when it's ours to decide. Only a mode found
-/// here replaces the driver's own reading of the URL: if an `sslmode` got
-/// past `take_tls` (a `?` in a password), the driver's `require` stands,
-/// and a verify mode it doesn't know fails its parse.
-fn driver_mode(tls: &Tls, mode: Mode, roots: &Roots) -> Option<SslMode> {
-    (tls.mode.is_some() || *roots == Roots::System).then_some(match mode {
+    config.ssl_mode(match mode {
         Mode::Disable => SslMode::Disable,
         Mode::Prefer => SslMode::Prefer,
         _ => SslMode::Require,
-    })
+    });
+    Ok(config.connect(connector(mode, &roots)?)?)
+}
+
+/// An `sslmode` that got past `take_tls` is still in the URL the driver
+/// parsed, so the driver's reading of it becomes this one's: the TLS
+/// checks then follow the mode the driver will use. (A verify mode the
+/// driver doesn't know fails its parse instead.)
+fn adopt(tls: &mut Tls, parsed: SslMode) {
+    if tls.mode.is_none() {
+        tls.mode = match parsed {
+            SslMode::Disable => Some(Mode::Disable),
+            SslMode::Require => Some(Mode::Require),
+            _ => None,
+        };
+    }
 }
 
 /// The mode and roots libpq would use. `verify-ca` and `verify-full` need
@@ -157,8 +162,12 @@ fn take_tls(url: &str) -> Result<(String, Tls)> {
     };
     // libpq's two URI prefixes; anything else is a key=value string.
     let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        match url.split_once('?') {
+        // The driver reads everything up to the first `@` as the user and
+        // password, so the query starts at the first `?` after it.
+        let credentials = url.find('@').map_or(0, |at| at + 1);
+        match url[credentials..].find('?').map(|at| url.split_at(credentials + at)) {
             Some((base, query)) => {
+                let query = &query[1..];
                 let mut kept = Vec::new();
                 for pair in query.split('&') {
                     // Percent-decoded as the driver does it: `+` is a plus.
@@ -317,18 +326,27 @@ mod tests {
         assert!(matches!(take_tls("host=h =x"), Err(Error::Connect(_))));
     }
 
-    /// `postgres://app:pa?ss@db/prod?sslmode=require` splits at the wrong
-    /// `?`, so `take_tls` finds no mode; the driver's `require` must stand
-    /// rather than become `prefer`.
+    /// A `?` in a password isn't the query: the driver reads up to the
+    /// first `@` as credentials, and so does this.
     #[test]
-    fn test_a_mode_this_missed_is_left_to_the_driver() {
-        let url = "postgres://app:pa?ss@db/prod?sslmode=require";
-        let (rest, found) = take_tls(url).unwrap();
-        assert_eq!((url, None), (rest.as_str(), found.mode));
-        let (mode, roots) = settle(&found, None).unwrap();
-        assert!(driver_mode(&found, mode, &roots).is_none());
-        let explicit = tls(Some(Mode::Disable), None);
-        assert!(matches!(driver_mode(&explicit, Mode::Disable, &Roots::None), Some(SslMode::Disable)));
+    fn test_a_question_mark_in_a_password_isnt_the_query() {
+        let (rest, mode, root) = take("postgres://app:pa?ss@db/prod?sslmode=require&sslrootcert=/ca.pem");
+        assert_eq!(("postgres://app:pa?ss@db/prod".to_string(), Some(Mode::Require), Some("/ca.pem".to_string())), (rest, mode, root));
+    }
+
+    /// Whatever sslmode the driver found and this didn't becomes this one's,
+    /// so require with a root file verifies, as libpq does.
+    #[test]
+    fn test_the_drivers_mode_is_adopted_when_this_found_none() {
+        let mut missed = tls(None, Some("/ca.pem"));
+        adopt(&mut missed, SslMode::Require);
+        assert_eq!(Some(Mode::Require), missed.mode);
+        let mut found = tls(Some(Mode::VerifyFull), None);
+        adopt(&mut found, SslMode::Disable);
+        assert_eq!(Some(Mode::VerifyFull), found.mode);
+        let mut default = tls(None, Some("system"));
+        adopt(&mut default, SslMode::Prefer);
+        assert_eq!((Mode::VerifyFull, Roots::System), settle(&default, None).unwrap());
     }
 
     fn tls(mode: Option<Mode>, root_cert: Option<&str>) -> Tls {
