@@ -37,12 +37,20 @@ fn test_sslmode_as_libpq_reads_it() {
     assert!(encrypted(&url(&host, &format!("sslmode=verify-full&sslrootcert={ca}"))).unwrap());
     assert!(encrypted(&url(&by_ip, &format!("sslmode=verify-ca&sslrootcert={ca}"))).unwrap());
     assert!(encrypted(&url(&by_ip, &format!("sslmode=verify-full&sslrootcert={ca}"))).is_err());
-    // A CA the system doesn't trust, and no sslrootcert: refused.
+    // Nothing to verify with: refused, as libpq refuses it, rather than
+    // trusting any CA. The system's CAs don't know the private one, and
+    // sslrootcert=system goes with verify-full only.
     assert!(encrypted(&url(&host, "sslmode=verify-full")).is_err());
+    assert!(encrypted(&url(&host, "sslmode=verify-ca")).is_err());
+    assert!(encrypted(&url(&host, "sslmode=verify-full&sslrootcert=system")).is_err());
+    assert!(encrypted(&url(&host, "sslmode=require&sslrootcert=system")).is_err());
     // require with a root certificate verifies the chain, as libpq does.
     assert!(encrypted(&url(&by_ip, &format!("sslmode=require&sslrootcert={ca}"))).unwrap());
     // A key=value connection string reads the same.
     let (name, port) = host.rsplit_once(':').unwrap();
     let string = format!("host={name} port={port} user=postgres dbname=postgres sslmode=verify-full sslrootcert='{ca}'");
     assert!(encrypted(&string).unwrap());
+    // An sslmode inside another setting's quoted value is that value's.
+    let quoted = format!("host={name} port={port} user=postgres dbname=postgres application_name='x sslmode=disable'");
+    assert!(encrypted(&quoted).unwrap());
 }
