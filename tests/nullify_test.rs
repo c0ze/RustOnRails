@@ -91,3 +91,15 @@ fn test_a_new_owner_nullifies_nothing() {
     ctx.destroy(unsaved).unwrap();
     assert_eq!(2, owned(&mut ctx, ann));
 }
+
+/// A new owner's `notes` is empty, not the orphans whose `user_id` is NULL,
+/// so `dependent: :destroy` on it destroys nothing.
+#[test]
+fn test_a_new_owners_association_is_empty() {
+    let mut ctx = ctx();
+    ctx.execute("INSERT INTO notes (user_id, body) VALUES (NULL, 'orphan')", &[]).unwrap();
+    let unsaved = ctx.build(Owner::new_record());
+    assert_eq!(0, Owner::NOTES.of(&ctx, unsaved).count(&mut ctx).unwrap());
+    Owner::NOTES.destroy_all(&mut ctx, unsaved).unwrap();
+    assert_eq!(1, Note::all().count(&mut ctx).unwrap());
+}

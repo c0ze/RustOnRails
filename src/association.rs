@@ -99,8 +99,13 @@ impl<M, T> HasMany<M, T> {
 }
 
 impl<M: Model, T: Model> HasMany<M, T> {
-    /// `post.comments`: a relation scoped to the owner.
+    /// `post.comments`: a relation scoped to the owner. A new owner's is
+    /// empty, as in Rails, rather than `post_id IS NULL`, which would find
+    /// every orphan (and destroy them, with `dependent: :destroy`).
     pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
+        if ctx.is_new_record(owner) {
+            return T::all().where_in(self.foreign_key, Vec::new());
+        }
         T::all().where_eq(self.foreign_key, ctx[owner].get("id"))
     }
 
@@ -167,6 +172,7 @@ impl<M: Model, T: Model> HasManyThrough<M, T> {
     /// `user.projects`: the same SQL Rails generates, an inner join with no
     /// DISTINCT, as a relation every scope and finder works on.
     pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
-        Relation::new().join_through(self.join_table, self.target_key, self.owner_key, ctx[owner].get("id"))
+        let owner_id = if ctx.is_new_record(owner) { Value::Nil } else { ctx[owner].get("id") };
+        Relation::new().join_through(self.join_table, self.target_key, self.owner_key, owner_id)
     }
 }
