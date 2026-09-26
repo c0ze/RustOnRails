@@ -103,3 +103,22 @@ fn test_insert_skips_validations_and_callbacks_but_fills_timestamps() {
     let rows = ctx.query("SELECT created_at IS NOT NULL FROM users WHERE id = $1", &[Value::Int(id)]).unwrap();
     assert!(rows[0].get::<_, bool>(0));
 }
+
+/// `==` on records is Active Record's: the same id, whichever load it came
+/// from; two new records are equal only to themselves.
+#[test]
+fn test_same_record_compares_ids_like_active_record() {
+    let mut ctx = support::ctx();
+    let ann = ctx.build(Person { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Person::new_record() });
+    let bob = ctx.build(Person { name: Some("Bob".into()), email: Some("bob@example.com".into()), ..Person::new_record() });
+    assert!(ctx.same_record(ann, ann));
+    assert!(!ctx.same_record(ann, bob));
+    ctx.save_bang(ann).unwrap();
+    let id = ctx[ann].id.unwrap();
+    let again = Person::find(&mut ctx, id).unwrap();
+    assert_ne!(ann, again);
+    assert!(ctx.same_record(ann, again));
+    assert!(ctx.same_record(Some(ann), Some(again)));
+    assert!(!ctx.same_record(Some(ann), None));
+    assert!(ctx.same_record(None::<Handle<Person>>, None));
+}

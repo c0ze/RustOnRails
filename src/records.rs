@@ -114,6 +114,20 @@ impl Ctx {
         &mut self.slot_mut(record).errors
     }
 
+    /// Active Record's `==`: the same record, or two records of the model
+    /// with the same id. There's no identity map, so loading a row twice
+    /// gives two handles, which compare unequal as handles.
+    pub fn same_record<M: Model>(&self, a: impl Into<Option<Handle<M>>>, b: impl Into<Option<Handle<M>>>) -> bool {
+        match (a.into(), b.into()) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                let id = self[a].get("id");
+                a == b || (!id.is_nil() && id == self[b].get("id"))
+            }
+            _ => false,
+        }
+    }
+
     pub fn is_new_record<M: Model>(&self, record: Handle<M>) -> bool {
         self.slot(record).saved.is_none()
     }
