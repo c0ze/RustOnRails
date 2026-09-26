@@ -40,6 +40,11 @@ impl Response {
         }
     }
 
+    /// A rendered template: `text/html`, as Rails sends a page.
+    pub fn html(status: u16, body: String) -> Self {
+        Self { body: body.into_bytes(), ..Self::head(status) }.typed("text/html; charset=utf-8")
+    }
+
     /// `head status`
     pub fn head(status: u16) -> Self {
         Self { status, content_type: None, body: Vec::new(), cookies: Vec::new(), raised: false }

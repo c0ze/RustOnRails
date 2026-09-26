@@ -4,7 +4,9 @@ pub mod application;
 mod carts;
 mod orders;
 mod products;
+mod storefront;
 
 pub use carts::CartsController;
 pub use orders::OrdersController;
 pub use products::ProductsController;
+pub use storefront::StorefrontController;
