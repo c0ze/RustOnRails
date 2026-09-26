@@ -16,10 +16,10 @@ pub struct OrdersController {
 }
 
 impl Controller for OrdersController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "order",
-            &[
+            Some(&[
                 "created_at",
                 "email",
                 "id",
@@ -27,7 +27,7 @@ impl Controller for OrdersController {
                 "status",
                 "total_cents",
                 "updated_at",
-            ],
+            ]),
         ))
     }
 

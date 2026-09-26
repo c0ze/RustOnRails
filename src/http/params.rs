@@ -61,13 +61,17 @@ impl Params {
     }
 
     /// `wrap_parameters`: when `name` isn't a parameter yet, puts the body
-    /// keys listed in `include` under it. Query parameters are never wrapped.
-    pub fn wrap(&mut self, body: &Map<String, Json>, name: &str, include: &[&str]) {
+    /// keys listed in `include` under it, or every body key but Rails'
+    /// excluded ones when there's no list. Query parameters are never wrapped.
+    pub fn wrap(&mut self, body: &Map<String, Json>, name: &str, include: Option<&[&str]>) {
         if self.0.contains_key(name) {
             return;
         }
-        let wrapped: Map<String, Json> =
-            body.iter().filter(|(k, _)| include.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let kept = |key: &str| match include {
+            Some(include) => include.contains(&key),
+            None => !["authenticity_token", "_method", "utf8"].contains(&key),
+        };
+        let wrapped: Map<String, Json> = body.iter().filter(|(k, _)| kept(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         self.0.insert(name.to_string(), Json::Object(wrapped));
     }
 }

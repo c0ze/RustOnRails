@@ -15,17 +15,17 @@ pub struct UsersController {
 }
 
 impl Controller for UsersController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "user",
-            &[
+            Some(&[
                 "api_token",
                 "created_at",
                 "email",
                 "id",
                 "name",
                 "updated_at",
-            ],
+            ]),
         ))
     }
 

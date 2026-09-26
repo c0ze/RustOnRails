@@ -2,11 +2,12 @@
 
 use rustonrails::{Router, action, health};
 
-use crate::controllers::{OrdersController, ProductsController};
+use crate::controllers::{CartsController, OrdersController, ProductsController};
 
 /// config/routes.rb, in the order Rails matches it.
 pub fn routes() -> Router {
     Router::new()
+        .session_store("_store_session")
         // GET /products/stats(.:format) products#stats
         .get(
             "/products/stats(.:format)",
@@ -105,6 +106,15 @@ pub fn routes() -> Router {
             "/orders/:id(.:format)",
             action("show", OrdersController::show),
         )
+        // POST /cart/add(.:format) carts#add
+        .post("/cart/add(.:format)", action("add", CartsController::add))
+        // DELETE /cart/clear(.:format) carts#clear
+        .delete(
+            "/cart/clear(.:format)",
+            action("clear", CartsController::clear),
+        )
+        // GET /cart(.:format) carts#show
+        .get("/cart(.:format)", action("show", CartsController::show))
         // GET /up(.:format) rails/health#show
         .get("/up(.:format)", Box::new(health))
 }

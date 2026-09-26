@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde_json::{Map, Value as Json};
 
-use super::{Request, Response, error_page};
+use super::{CookieKey, Request, Response, Session, SessionStore, error_page};
 
 pub type Handler = Box<dyn Fn(&mut Request) -> Response + Send + Sync>;
 /// A `constraints:` lambda.
@@ -19,6 +19,7 @@ struct Route {
 #[derive(Default)]
 pub struct Router {
     routes: Vec<Route>,
+    session: Option<SessionStore>,
 }
 
 impl Router {
@@ -48,7 +49,42 @@ impl Router {
     /// Like Rails, a failed constraint moves on to the next route, and a
     /// HEAD request with no HEAD route of its own runs the matching GET
     /// route (the server leaves out the body). No match is a 404 page.
+    /// The cookie store (`ActionDispatch::Session::CookieStore, key: name`).
+    pub fn session_store(mut self, name: &'static str) -> Self {
+        self.session = Some(SessionStore { name, key: None });
+        self
+    }
+
+    /// The app's `secret_key_base`, which encrypts the session cookie.
+    pub fn secret_key_base(mut self, secret: Option<&str>) -> Self {
+        if let Some(store) = &mut self.session {
+            store.key = secret.map(CookieKey::derive);
+        }
+        self
+    }
+
+    /// Routes the request, then writes the cookies it set and the session
+    /// it loaded, as Rails' cookie and session middleware do.
     pub fn call(&self, req: &mut Request) -> Response {
+        let cookie = self.session.as_ref().and_then(|store| req.cookies.get(store.name));
+        req.session = Session::new(self.session.clone(), cookie);
+        let mut response = self.route_request(req);
+        if response.raised {
+            return response;
+        }
+        let mut cookies = req.cookies.headers();
+        match req.session.header() {
+            Ok(session) => cookies.extend(session),
+            Err(error) => {
+                eprintln!("{} {} failed: {error}", req.method, req.path);
+                return error_page(500);
+            }
+        }
+        response.cookies.extend(cookies);
+        response
+    }
+
+    fn route_request(&self, req: &mut Request) -> Response {
         let method = req.method.clone();
         if let Some(response) = self.dispatch(req, &method) {
             return response;

@@ -4,13 +4,18 @@ version = "0.9.0"
 edition = "2024"
 
 [dependencies]
+# Rails' encrypted cookies: AES-256-GCM, a PBKDF2-SHA256 key, Base64.
+aes-gcm = "0.10"
+base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 form_urlencoded = "1"
 getrandom = "0.4"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
 
 # Ruby promotes an overflowing Integer to a Bignum. Generated code panics
 # (the server's 500) instead of wrapping, in release builds too.

@@ -1,6 +1,6 @@
 use serde_json::{Map, Value as Json};
 
-use super::{Params, parse_query};
+use super::{Cookies, Params, Session, parse_query};
 use crate::Ctx;
 
 /// One request: what the client sent, the merged `params`, and the `Ctx`
@@ -16,6 +16,10 @@ pub struct Request {
     /// The body claimed to be JSON and didn't parse. Rails answers 400 once
     /// a route matches, before the action runs.
     pub malformed_body: bool,
+    /// `cookies`, from the `Cookie` header.
+    pub cookies: Cookies,
+    /// `session`, which the router sets up with the app's store.
+    pub session: Session,
     pub ctx: Ctx,
 }
 
@@ -33,12 +37,15 @@ impl Request {
             body: Map::new(),
             params: Params::default(),
             malformed_body: false,
+            cookies: Cookies::default(),
+            session: Session::default(),
             ctx,
         }
     }
 
     pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.headers = headers;
+        self.cookies = Cookies::parse(self.header("cookie").as_deref());
         self
     }
 
