@@ -31,6 +31,8 @@ pub struct Config {
     pub workers: usize,
     /// `SECRET_KEY_BASE`, for the session cookie.
     pub secret_key_base: Option<String>,
+    /// `REDIS_URL`, where `perform_later` puts jobs.
+    pub redis_url: Option<String>,
 }
 
 pub struct Running {
@@ -68,6 +70,7 @@ pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
     let (jobs, queue) = channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));
     let router = Arc::new(router.secret_key_base(config.secret_key_base.as_deref()));
+    crate::jobs::configure(config.redis_url.as_deref());
     let workers = (0..config.workers.max(1))
         .map(|_| {
             let (queue, router, url) = (queue.clone(), router.clone(), config.database_url.clone());

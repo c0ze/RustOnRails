@@ -35,7 +35,7 @@ impl Controller for ProductsController {
         // before_action :set_product
         if matches!(
             action,
-            "availability" | "quote" | "restock" | "show" | "update"
+            "availability" | "quote" | "restock" | "restock_later" | "show" | "update"
         ) {
             self.set_product(req)?;
         }
@@ -259,7 +259,22 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:91
+    // app/controllers/products_controller.rb:92
+    pub fn restock_later(&mut self, req: &mut Request) -> Result<Response> {
+        let product = self.product;
+        let amount = req.params.fetch("amount", 1).to_i()?;
+        let amount_2 = self.amount(req, amount)?;
+        crate::jobs::restock_job::RESTOCK_JOB.perform_later(
+            &crate::jobs::APP,
+            vec![
+                rustonrails::jobs::record_argument(&req.ctx, &crate::jobs::APP, product)?,
+                Json::from(amount_2),
+            ],
+        )?;
+        Ok(Response::json(202, json!({ "queued": true })))
+    }
+
+    // app/controllers/products_controller.rb:97
     pub fn quote(&mut self, req: &mut Request) -> Result<Response> {
         let quantity_2 = req.params.fetch("quantity", 1).to_i()?;
         let quantity = self.amount(req, quantity_2)?;
@@ -275,20 +290,20 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:99
+    // app/controllers/products_controller.rb:105
     fn set_product(&mut self, req: &mut Request) -> Result<()> {
         self.product = Some(Product::find(&mut req.ctx, req.params.value("id"))?);
         Ok(())
     }
 
-    // app/controllers/products_controller.rb:103
+    // app/controllers/products_controller.rb:109
     fn product_params(&mut self, req: &mut Request) -> Result<Attributes> {
         Ok(req
             .params
             .expect("product", &["name", "price_cents", "stock", "active"])?)
     }
 
-    // app/controllers/products_controller.rb:109
+    // app/controllers/products_controller.rb:115
     fn amount(&mut self, _req: &mut Request, requested: i64) -> Result<i64> {
         Ok(i64::max(requested, 0))
     }

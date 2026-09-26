@@ -13,6 +13,7 @@ mod dynamic;
 mod enums;
 mod error;
 mod http;
+pub mod jobs;
 mod json;
 mod model;
 mod normalization;

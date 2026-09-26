@@ -55,6 +55,16 @@ impl Value {
     }
 
     /// `to_s` as validators use it; nil becomes "".
+    /// Ruby's `inspect`, as error messages quote a value: a String in
+    /// double quotes with Ruby's escapes, nil as `nil`.
+    pub fn inspect(&self) -> String {
+        match self {
+            Value::Nil => "nil".into(),
+            Value::Str(s) => inspect_str(s),
+            other => other.to_ruby_string(),
+        }
+    }
+
     pub fn to_ruby_string(&self) -> String {
         match self {
             Value::Nil => String::new(),
@@ -143,4 +153,30 @@ impl<T: Into<Value>> From<Option<T>> for Value {
     fn from(v: Option<T>) -> Self {
         v.map_or(Value::Nil, Into::into)
     }
+}
+
+/// `String#inspect` for a UTF-8 String.
+fn inspect_str(text: &str) -> String {
+    let mut out = String::from("\"");
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\x1b' => out.push_str("\\e"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\x0b' => out.push_str("\\v"),
+            '\x0c' => out.push_str("\\f"),
+            // `#{`, `#$` and `#@` would interpolate in a literal.
+            '#' if matches!(chars.peek(), Some('{' | '$' | '@')) => out.push_str("\\#"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

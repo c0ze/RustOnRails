@@ -52,6 +52,11 @@ pub enum Error {
     NotPersisted { model: &'static str },
     /// `ActionController::ParameterMissing`
     ParameterMissing { key: &'static str },
+    /// Redis refused or couldn't be reached (the jobs' queue).
+    Redis { message: String },
+    /// A Ruby exception of a class nothing here rescues, such as Active
+    /// Job's, named for the error a worker records.
+    Raised { class: &'static str, message: String },
     /// Anything the database reported.
     Db(postgres::Error),
 }
@@ -71,6 +76,7 @@ impl fmt::Display for Error {
             Error::NoMethod { what, value } => write!(f, "undefined method '{what}' for {value:?}"),
             Error::Type { message } | Error::Argument { message } => write!(f, "{message}"),
             Error::ZeroDivision => write!(f, "divided by 0"),
+            Error::Redis { message } | Error::Raised { message, .. } => write!(f, "{message}"),
             Error::Overflow { value } => write!(f, "{value} doesn't fit in a 64-bit integer"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}."),

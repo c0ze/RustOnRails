@@ -43,7 +43,7 @@ fn start(workers: usize) -> server::Running {
         .post("/echo", Box::new(|req: &mut Request| {
             Response::json(201, json!({"name": req.params.get("name"), "page": req.params.get("page")}))
         }));
-    server::start(router, Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers, secret_key_base: None }).unwrap()
+    server::start(router, Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers, secret_key_base: None, redis_url: None }).unwrap()
 }
 
 #[test]

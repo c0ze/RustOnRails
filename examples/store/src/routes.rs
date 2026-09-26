@@ -41,6 +41,11 @@ pub fn routes() -> Router {
             "/products/:id/restock(.:format)",
             action("restock", ProductsController::restock),
         )
+        // POST /products/:id/restock_later(.:format) products#restock_later
+        .post(
+            "/products/:id/restock_later(.:format)",
+            action("restock_later", ProductsController::restock_later),
+        )
         // GET /products/:id/quote(.:format) products#quote
         .get(
             "/products/:id/quote(.:format)",
