@@ -2,6 +2,11 @@
 
 RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
 
+## 0.8.0
+
+- `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. An Integer and a Float compare exactly.
+- `div_integers`, `mod_integers` and `mod_floats` are Ruby's floor division and modulo for typed numbers.
+
 ## 0.7.0
 
 - Relations compute `count`, `sum`, `minimum`, `maximum`, `pluck` and `exists?` in the SQL Rails writes: aggregates drop the order and keep the limit and offset; a count with a limit counts a subquery; `limit(0)` needs no query. `numeric` values (the `SUM` of a bigint) read back as Integers.
