@@ -108,10 +108,16 @@ fn settle(tls: &Tls, home: Option<&Path>) -> Result<(Mode, Roots)> {
 
 /// As libpq does: `prefer` verifies nothing, `require` verifies the chain
 /// when there's a root file, `verify-ca` always does, and `verify-full`
-/// checks the host name as well. A root file replaces the system's CAs.
+/// checks the host name as well. A root file replaces the system's CAs,
+/// and is read only when something is verified against it.
 fn connector(mode: Mode, roots: &Roots) -> Result<MakeTlsConnector> {
+    let chain = match mode {
+        Mode::VerifyCa | Mode::VerifyFull => true,
+        Mode::Require => matches!(roots, Roots::File(_)),
+        Mode::Disable | Mode::Prefer => false,
+    };
     let mut builder = TlsConnector::builder();
-    if let Roots::File(path) = roots {
+    if let (true, Roots::File(path)) = (chain, roots) {
         let shown = path.display();
         let pem = std::fs::read(path).map_err(|e| Error::Connect(format!("can't read sslrootcert {shown}: {e}")))?;
         let certificates = Certificate::stack_from_pem(&pem).map_err(|e| Error::Connect(format!("sslrootcert {shown}: {e}")))?;
@@ -123,11 +129,6 @@ fn connector(mode: Mode, roots: &Roots) -> Result<MakeTlsConnector> {
             builder.add_root_certificate(certificate);
         }
     }
-    let chain = match mode {
-        Mode::VerifyCa | Mode::VerifyFull => true,
-        Mode::Require => matches!(roots, Roots::File(_)),
-        Mode::Disable | Mode::Prefer => false,
-    };
     builder.danger_accept_invalid_certs(!chain);
     builder.danger_accept_invalid_hostnames(mode != Mode::VerifyFull);
     let connector = builder.build().map_err(|e| Error::Connect(format!("TLS setup failed: {e}")))?;
@@ -321,6 +322,9 @@ mod tests {
         let empty = std::env::temp_dir().join(format!("rustonrails-empty-{}.pem", std::process::id()));
         std::fs::write(&empty, "").unwrap();
         assert!(matches!(connector(Mode::VerifyCa, &Roots::File(empty.clone())), Err(Error::Connect(_))));
+        // Nothing is verified under prefer or disable, so the file isn't read.
+        assert!(connector(Mode::Prefer, &Roots::File(empty.clone())).is_ok());
+        assert!(connector(Mode::Disable, &Roots::File("/nonexistent/root.pem".into())).is_ok());
         std::fs::remove_file(&empty).ok();
     }
 }
