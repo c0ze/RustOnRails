@@ -2,6 +2,10 @@
 
 RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
 
+## 0.6.0
+
+- `examples/store`, Rutile's third example, generated with methods that take typed parameters. No runtime changes were needed: typed parameters are plain Rust arguments.
+
 ## 0.5.0
 
 The first tagged version: the runtime the 0.5.0 compiler generates code for.
