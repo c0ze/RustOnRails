@@ -78,6 +78,26 @@ fn test_server_survives_a_panicking_handler() {
     running.stop();
 }
 
+/// A panic outside a transaction leaves the connection clean, so the
+/// worker keeps it rather than reconnecting for the next request.
+#[test]
+fn test_a_panic_outside_a_transaction_keeps_the_connection() {
+    let running = start(1);
+    let (_, before) = get(running.address, "/pid");
+    assert_eq!(500, get(running.address, "/boom").0);
+    assert_eq!(before, get(running.address, "/pid").1);
+    running.stop();
+}
+
+/// Methods are case-sensitive, so `get` isn't routed as GET.
+#[test]
+fn test_a_lowercase_method_is_not_get() {
+    let running = start(1);
+    let request = "get /up HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n";
+    assert_eq!(404, send(running.address, request).0);
+    running.stop();
+}
+
 #[test]
 fn test_a_dead_connection_is_replaced() {
     let running = start(1);

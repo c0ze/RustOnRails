@@ -111,7 +111,11 @@ fn accept(listener: &TcpListener, jobs: &Sender<Job>, stopping: &AtomicBool) {
         match stream {
             Ok(stream) => {
                 let jobs = jobs.clone();
-                std::thread::spawn(move || serve(stream, &jobs));
+                // Out of threads, the connection is dropped; a panic here
+                // would end the accept loop for good.
+                if std::thread::Builder::new().spawn(move || serve(stream, &jobs)).is_err() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
             }
             // Most likely out of file descriptors; don't spin on it.
             Err(_) => std::thread::sleep(Duration::from_millis(10)),
@@ -195,12 +199,14 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
     }
 }
 
-/// Runs one request in a fresh `Ctx`. A panic becomes a 500 and costs the
-/// connection, since the panic may have left it mid-transaction.
+/// Runs one request in a fresh `Ctx`. A panic becomes a 500. It costs the
+/// connection only when it left a transaction open, so a request that
+/// overflows an integer on purpose doesn't make the next one reconnect.
 fn handle(router: &Router, connection: Connection, incoming: &Incoming) -> (Response, Option<Connection>) {
     let mut req = build_request(Ctx::resume(connection), incoming);
     match catch_unwind(AssertUnwindSafe(|| router.call(&mut req))) {
         Ok(response) => (response, Some(req.ctx.into_connection())),
+        Err(_) if req.ctx.depth == 0 => (error_page(500), Some(req.ctx.into_connection())),
         Err(_) => (error_page(500), None),
     }
 }
