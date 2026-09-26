@@ -204,3 +204,22 @@ fn test_where_in_with_nil_matches_null_rows() {
     assert_eq!(1, count(&mut ctx, vec!["b".into()]));
     assert_eq!(0, count(&mut ctx, vec![]));
 }
+
+/// `where(user_id: "")` binds NULL in Rails, which matches no row, where
+/// `where(user_id: nil)` is IS NULL; an open range with a nil start is no
+/// condition at all.
+#[test]
+fn test_a_value_that_casts_to_nil_matches_nothing() {
+    let mut ctx = support::ctx();
+    let ann = author(&mut ctx, "ann");
+    article(&mut ctx, ann, "a");
+    ctx.execute("UPDATE posts SET published_at = NULL", &[]).unwrap();
+    let all = Article::all().count(&mut ctx).unwrap();
+    assert_eq!(0, Article::all().where_eq("user_id", "").count(&mut ctx).unwrap());
+    assert_eq!(0, Article::all().where_eq("user_id", "abc").count(&mut ctx).unwrap());
+    assert_eq!(0, Article::all().where_not("user_id", "abc").count(&mut ctx).unwrap());
+    assert_eq!(0, Article::all().where_eq("published_at", "not a time").count(&mut ctx).unwrap());
+    assert_eq!(all, Article::all().where_eq("published_at", Value::Nil).count(&mut ctx).unwrap());
+    assert_eq!(all, Article::all().where_gte("published_at", Value::Nil).count(&mut ctx).unwrap());
+    assert_eq!(0, Article::all().joins(&Article::AUTHOR).where_on::<Author>("id", "").count(&mut ctx).unwrap());
+}

@@ -78,6 +78,10 @@ impl<M: Model> Relation<M> {
                     }
                     continue;
                 }
+                Filter::Never => {
+                    sql.push_str("1=0");
+                    continue;
+                }
                 Filter::Sql(fragment, binds) => {
                     let mut parts = fragment.split('?');
                     sql.push('(');
@@ -94,7 +98,14 @@ impl<M: Model> Relation<M> {
                 Filter::Gte(c, v) => (c, ">=", v),
             };
             let target = format!("{table}.{}", quote(column));
+            // Rails' QueryAttribute: nil is IS NULL, but a value that casts
+            // to nil ("" or "abc" for an integer) binds NULL and matches no
+            // row, except for an enum, whose unknown label reads as nil.
+            let enumerated = M::behavior().enum_for(column).is_some();
             match M::behavior().query_value(column, M::cast_query(column, value.clone())) {
+                Value::Nil if !value.is_nil() && !enumerated => sql.push_str("1=0"),
+                // `where(x: nil..)` is a range open at both ends: no condition.
+                Value::Nil if op == ">=" => sql.push_str("1=1"),
                 Value::Nil if op == "<>" => sql.push_str(&format!("{target} IS NOT NULL")),
                 Value::Nil => sql.push_str(&format!("{target} IS NULL")),
                 value => {

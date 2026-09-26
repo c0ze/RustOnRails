@@ -19,6 +19,9 @@ enum Filter {
     EqOn(&'static str, String, Value),
     /// `where("title ILIKE ?", pattern)`
     Sql(&'static str, Vec<Value>),
+    /// A condition no row meets: `= NULL`, as Rails binds a value that
+    /// casts to nil.
+    Never,
 }
 
 /// `has_many :through`'s inner join: the join table, its key to the
@@ -161,8 +164,10 @@ impl<M: Model> Relation<M> {
     /// `where(memberships: { user_id: 1 })`: a column of a joined table,
     /// cast by that table's model.
     pub fn where_on<J: Model>(mut self, column: &str, value: impl Into<Value>) -> Self {
-        let value = J::behavior().query_value(column, J::cast_query(column, value.into()));
-        self.filters.push(Filter::EqOn(J::TABLE, column.to_string(), value));
+        let given = value.into();
+        let value = J::behavior().query_value(column, J::cast_query(column, given.clone()));
+        let never = value.is_nil() && !given.is_nil() && J::behavior().enum_for(column).is_none();
+        self.filters.push(if never { Filter::Never } else { Filter::EqOn(J::TABLE, column.to_string(), value) });
         self
     }
 
