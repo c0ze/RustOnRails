@@ -1,6 +1,17 @@
 # Changelog
 
-RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
+RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](https://github.com/c0ze/Rutile/blob/main/docs/roadmap.md).
+
+## Unreleased
+
+- The server's limits, each configurable (`Limits`, or the environment): a connection cap, deadlines for a request's headers, its body and the response, and the body size. A client trickling bytes can no longer hold a thread forever.
+- Postgres over TLS, with every libpq `sslmode` and `sslrootcert`.
+- HTTP: control bytes in the target or a header, `Transfer-Encoding` on HTTP/1.0 and lowercase methods are refused; running out of threads no longer ends the accept loop; a panic outside a transaction keeps the worker's connection.
+- Connections: one ended by a FATAL error is replaced after that request, not the next; statements a migration invalidated are prepared again.
+- Records and queries, as Rails does them: an integer past a bigint fails the write instead of saving 0 and is unboundable in queries (`find` of it is a 404); a `where` value that casts to nil matches nothing; `where(x: [a, nil])` and one-element lists; enum writes take labels only and a blank string is nil; `"1_000"` casts to 1000; a new owner's `has_many` is empty; saving a destroyed record is false; `Ctx::same_record` for `==`.
+- Datetime strings without seconds or with a `UTC` suffix parse, and one in an unknown format is an error rather than a silent nil.
+- `as_json(include:)` leaves out a nil `belongs_to`; `full_messages` of a `:base` error is the message alone; a JSON body that isn't an object is `params[:_json]`.
+- Test setup refuses to wipe a database it didn't load.
 
 ## 0.5.0
 
