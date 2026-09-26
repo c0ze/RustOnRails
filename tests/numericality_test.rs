@@ -79,6 +79,7 @@ fn test_only_integer_and_greater_than() {
         ("12abc".into(), &[NOT_A_NUMBER]),
         ("0x1A".into(), &[NOT_A_NUMBER]),
         (" 0x1A".into(), &[NOT_AN_INTEGER]),
+        (" 0x1.1p-9223372036854775808".into(), &[NOT_AN_INTEGER]),
         ("5".into(), &[]),
         ("+5".into(), &[]),
         ("-0".into(), &["must be greater than 0"]),
@@ -108,6 +109,9 @@ fn test_float_bounds() {
         ("1e3".into(), &["must be less than or equal to 10"]),
         ("1_000".into(), &["must be less than or equal to 10"]),
         (" 0x1A".into(), &["must be less than or equal to 10"]),
+        // Ruby's Float reads an exponent past an i64 as 0.0.
+        (" 0x1.1p-9223372036854775808".into(), &["must be greater than 0.5"]),
+        (" 0x1p-99999999999999999999".into(), &["must be greater than 0.5"]),
         ("99999999999999999999".into(), &["must be less than or equal to 10"]),
         (1e20.into(), &["must be less than or equal to 10"]),
         ("abc".into(), &[NOT_A_NUMBER]),

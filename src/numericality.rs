@@ -130,7 +130,12 @@ fn hex_float(hex: &str) -> Option<f64> {
     if int.is_empty() && frac.is_empty() && !hex.starts_with('.') {
         return None;
     }
-    let exponent: i64 = parts.get(3).map_or(Some(0), |m| m.as_str().replace('_', "").parse().ok())?;
+    // An exponent past an i64 is still just very large or very small:
+    // Ruby reads 0x1p-99999999999999999999 as 0.0.
+    let exponent = parts.get(3).map_or(0, |m| {
+        let text = m.as_str().replace('_', "");
+        text.parse().unwrap_or(if text.starts_with('-') { i64::MIN } else { i64::MAX })
+    });
     // 32 hex digits fill a u128; any beyond only decide rounding, so they
     // become one sticky bit.
     let digits = format!("{int}{frac}");
@@ -140,7 +145,7 @@ fn hex_float(hex: &str) -> Option<f64> {
     if digits[kept.len()..].chars().any(|c| c != '0') {
         mantissa |= 1;
     }
-    let shift = exponent - 4 * frac.len() as i64 + 4 * (digits.len() - kept.len()) as i64;
+    let shift = exponent.saturating_sub(4 * frac.len() as i64).saturating_add(4 * (digits.len() - kept.len()) as i64);
     Some(scale(mantissa as f64, shift))
 }
 
