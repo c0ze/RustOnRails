@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::LazyLock;
 
-use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, errors_json, model, now};
+use rustonrails::{Behavior, Check, Ctx, Error, Handle, Model, Record, Result, Time, Value, errors_json, model, now};
 
 model! {
     pub struct Person in "users" { id: i64, name: String, email: String, created_at: Time, updated_at: Time }
@@ -218,6 +218,16 @@ fn test_unknown_enum_label_raises_on_write() {
     let error = Loose::create(&mut ctx, Loose { user_id, title: Some("t".into()), status: Some("archived".into()), ..Loose::new_record() }).unwrap_err();
     assert!(matches!(error, Error::InvalidEnum { .. }), "{error:?}");
     assert_eq!("'archived' is not a valid status", error.to_string());
+    // An integer the enum doesn't map, and a numeric string, which Rails'
+    // enum type refuses too, rather than writing 99 or 1.
+    let post = Loose::create_bang(&mut ctx, Loose { user_id, title: Some("t".into()), ..Loose::new_record() }).unwrap();
+    for given in [Value::Int(99), Value::from("1")] {
+        ctx.assign(post, &[("status".into(), given)]).unwrap();
+        assert!(matches!(ctx.save(post), Err(Error::InvalidEnum { .. })));
+    }
+    ctx.assign(post, &[("status".into(), Value::Int(1))]).unwrap();
+    ctx.save_bang(post).unwrap();
+    assert_eq!(Some("published"), ctx[post].status.as_deref());
 }
 
 /// A count too big for a bigint is validated as given, then refused at the

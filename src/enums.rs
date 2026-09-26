@@ -21,13 +21,15 @@ impl<M> Behavior<M> {
         }
     }
 
-    /// `to_database` for INSERT and UPDATE: an unknown label is an error, as
-    /// Rails raises rather than writing NULL.
+    /// `to_database` for INSERT and UPDATE: anything but a label is an
+    /// error, as Rails raises on assigning it rather than writing it. That
+    /// includes an integer the enum doesn't map (assigned 99, held as
+    /// "99") and a numeric string, which Rails' enum type doesn't read.
     pub(crate) fn to_database_for_write(&self, attribute: &str, value: Value) -> Result<Value> {
         match (self.enum_for(attribute), &value) {
-            (Some(def), Value::Str(label)) => match self.to_database(attribute, value.clone()) {
-                Value::Nil => Err(Error::InvalidEnum { attribute: def.attribute, value: label.clone() }),
-                known => Ok(known),
+            (Some(def), Value::Str(label)) => match def.mapping.iter().find(|(l, _)| l == label) {
+                Some((_, i)) => Ok(Value::Int(*i)),
+                None => Err(Error::InvalidEnum { attribute: def.attribute, value: label.clone() }),
             },
             _ => Ok(self.to_database(attribute, value)),
         }
