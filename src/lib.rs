@@ -8,6 +8,7 @@
 mod association;
 mod behavior;
 mod cast;
+mod connect;
 mod ctx;
 mod enums;
 mod error;
@@ -32,7 +33,7 @@ pub use behavior::{Behavior, Check, Cond, Event, Hook, Normalizer};
 pub use cast::FromValue;
 pub use ctx::{Connection, Ctx};
 pub use error::{Error, RecordInvalid, Result};
-pub use http::{Action, Constraint, Controller, Handler, Params, Request, Response, Router, action, error_page, error_response, health, parse_query, reason, status};
+pub use http::{Action, Constraint, Controller, Handler, Limits, Params, Request, Response, Router, action, error_page, error_response, health, parse_query, reason, status};
 pub use http::server;
 pub use json::{AsJson, errors_json, format_date, format_time, merge, value_json};
 pub use records::Handle;

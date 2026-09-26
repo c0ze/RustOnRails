@@ -2,9 +2,10 @@ mod support;
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::time::{Duration, Instant};
 
 use rustonrails::server::{self, Config};
-use rustonrails::{Json, Request, Response, Router, json};
+use rustonrails::{Json, Limits, Request, Response, Router, json};
 
 fn send(address: SocketAddr, request: &str) -> (u16, Json) {
     let mut stream = TcpStream::connect(address).unwrap();
@@ -23,6 +24,10 @@ fn get(address: SocketAddr, path: &str) -> (u16, Json) {
 }
 
 fn start(workers: usize) -> server::Running {
+    start_with(workers, Limits::default())
+}
+
+fn start_with(workers: usize, limits: Limits) -> server::Running {
     support::prepare();
     let router = Router::new()
         .get("/up", Box::new(|_: &mut Request| Response::json(200, json!({"ok": true}))))
@@ -43,7 +48,7 @@ fn start(workers: usize) -> server::Running {
         .post("/echo", Box::new(|req: &mut Request| {
             Response::json(201, json!({"name": req.params.get("name"), "page": req.params.get("page")}))
         }));
-    server::start(router, Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers }).unwrap()
+    server::start(router, Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers, limits }).unwrap()
 }
 
 #[test]
@@ -129,6 +134,60 @@ fn test_an_oversized_body_is_413() {
     let running = start(1);
     let request = "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 20971520\r\nConnection: close\r\n\r\n";
     assert_eq!(413, send(running.address, request).0);
+    running.stop();
+}
+
+/// Sends `head` and then `trickle` a byte at a time, 50 ms apart, as a
+/// slowloris client would; returns the status that comes back and how long
+/// it took.
+fn trickled(address: SocketAddr, head: &str, trickle: &str) -> (u16, Duration) {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+    let started = Instant::now();
+    stream.write_all(head.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    for byte in trickle.bytes().cycle().take(200) {
+        if stream.write_all(&[byte]).is_err() {
+            break;
+        }
+        match stream.read_to_end(&mut raw) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(_) => break,
+        }
+    }
+    let status = String::from_utf8_lossy(&raw).get(9..12).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, started.elapsed())
+}
+
+/// Headers or a body trickling in a byte at a time each run against a
+/// deadline, not the idle timeout each read would reset: past it, a 408.
+#[test]
+fn test_a_request_that_trickles_in_is_cut_off_with_a_408() {
+    let limits = Limits { header_timeout: Duration::from_millis(300), body_timeout: Duration::from_millis(300), ..Limits::default() };
+    let running = start_with(1, limits);
+    let (status, took) = trickled(running.address, "GET /up HTTP/1.1\r\nX-Slow: ", "a");
+    assert_eq!(408, status);
+    assert!(took < Duration::from_secs(3), "{took:?}");
+    let head = "POST /echo HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n";
+    let (status, took) = trickled(running.address, head, " ");
+    assert_eq!(408, status);
+    assert!(took < Duration::from_secs(3), "{took:?}");
+    assert_eq!(200, get(running.address, "/up").0);
+    running.stop();
+}
+
+/// Past max_connections a new connection is a 503, and a slot frees when
+/// its connection ends.
+#[test]
+fn test_connections_past_the_limit_are_turned_away() {
+    let running = start_with(1, Limits { max_connections: 2, ..Limits::default() });
+    let held: Vec<TcpStream> = (0..2).map(|_| TcpStream::connect(running.address).unwrap()).collect();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(503, get(running.address, "/up").0);
+    drop(held);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(200, get(running.address, "/up").0);
     running.stop();
 }
 

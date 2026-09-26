@@ -51,16 +51,18 @@ impl Head {
 /// Why a request couldn't be read.
 #[derive(Debug, PartialEq)]
 pub enum WireError {
-    /// The client closed the connection, stalled past the timeout or broke
-    /// it mid-request. There's nobody to answer.
+    /// The client closed the connection, went quiet or broke it
+    /// mid-request. There's nobody to answer.
     Gone,
     /// The request can't be served: answer with this status and close.
     Refuse(u16),
 }
 
+/// A deadline that passed (a request trickling in past its limit) is a
+/// 408; any other failure to read means the client is gone.
 impl From<io::Error> for WireError {
-    fn from(_: io::Error) -> Self {
-        WireError::Gone
+    fn from(error: io::Error) -> Self {
+        if error.kind() == io::ErrorKind::TimedOut { WireError::Refuse(408) } else { WireError::Gone }
     }
 }
 

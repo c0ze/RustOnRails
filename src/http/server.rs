@@ -1,34 +1,30 @@
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufRead, BufReader};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use super::limits::Timed;
 use super::wire::{self, WireError};
-use super::{Request, Response, Router, error_page};
+use super::{Limits, Request, Response, Router, error_page};
 use crate::{Connection, Ctx};
-
-/// The largest request body accepted; bigger ones get a 413.
-pub const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
-
-/// How long a connection may sit idle between requests, or stall in the
-/// middle of one, before it's closed: Puma's `persistent_timeout`.
-pub const IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// After refusing a request, how long to keep reading what the client is
 /// still sending, and how much of it, before closing.
 const LINGER: Duration = Duration::from_secs(1);
 const LINGER_BYTES: u64 = 1024 * 1024;
 
-/// Where to listen, which database to use, and how many worker threads to
-/// run: Puma's threads, each with its own connection.
+/// Where to listen, which database to use, how many worker threads to run
+/// (Puma's threads, each with its own connection), and what one client may
+/// hold of the server.
 pub struct Config {
     pub address: String,
     pub database_url: String,
     pub workers: usize,
+    pub limits: Limits,
 }
 
 pub struct Running {
@@ -74,8 +70,8 @@ pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
         .collect();
     let stopping = Arc::new(AtomicBool::new(false));
     let intake = {
-        let (stopping, jobs) = (stopping.clone(), jobs.clone());
-        std::thread::spawn(move || accept(&listener, &jobs, &stopping))
+        let (stopping, jobs, limits) = (stopping.clone(), jobs.clone(), Arc::new(config.limits));
+        std::thread::spawn(move || accept(&listener, &jobs, &stopping, &limits))
     };
     Ok(Running { address, stopping, jobs, intake, workers })
 }
@@ -103,17 +99,24 @@ impl Running {
     }
 }
 
-fn accept(listener: &TcpListener, jobs: &Sender<Job>, stopping: &AtomicBool) {
+fn accept(listener: &TcpListener, jobs: &Sender<Job>, stopping: &AtomicBool, limits: &Arc<Limits>) {
+    let open = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         if stopping.load(Ordering::SeqCst) {
             return;
         }
         match stream {
+            Ok(stream) if open.load(Ordering::SeqCst) >= limits.max_connections => busy(stream),
             Ok(stream) => {
-                let jobs = jobs.clone();
-                // Out of threads, the connection is dropped; a panic here
-                // would end the accept loop for good.
-                if std::thread::Builder::new().spawn(move || serve(stream, &jobs)).is_err() {
+                let slot = Slot::take(&open);
+                let (jobs, limits) = (jobs.clone(), limits.clone());
+                // Out of threads, the connection is dropped, and its slot
+                // with it; a panic here would end the accept loop for good.
+                let spawned = std::thread::Builder::new().spawn(move || {
+                    let _slot = slot;
+                    serve(stream, &jobs, &limits);
+                });
+                if spawned.is_err() {
                     std::thread::sleep(Duration::from_millis(10));
                 }
             }
@@ -123,26 +126,57 @@ fn accept(listener: &TcpListener, jobs: &Sender<Job>, stopping: &AtomicBool) {
     }
 }
 
+/// One of `max_connections`, given back when its connection ends, however
+/// it ends.
+struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    fn take(open: &Arc<AtomicUsize>) -> Self {
+        open.fetch_add(1, Ordering::SeqCst);
+        Self(open.clone())
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A connection past `max_connections`: a 503, written without waiting on
+/// the client, and closed.
+fn busy(mut stream: TcpStream) {
+    stream.set_write_timeout(Some(Duration::from_millis(100))).ok();
+    wire::write_response(&mut stream, &error_page(503), false, true).ok();
+    stream.shutdown(Shutdown::Write).ok();
+}
+
 /// Reads requests off one connection and writes their responses in order,
-/// until the client closes it, goes quiet, or asks to close.
-fn serve(stream: TcpStream, jobs: &Sender<Job>) {
+/// until the client closes it, goes quiet, asks to close, or runs past a
+/// limit.
+fn serve(stream: TcpStream, jobs: &Sender<Job>, limits: &Limits) {
     // Each response goes out in one write, and TCP_NODELAY sends it now
     // rather than holding its last segment for the client's delayed ACK.
-    let ready = stream
-        .set_nodelay(true)
-        .and_then(|_| stream.set_read_timeout(Some(IDLE_TIMEOUT)))
-        .and_then(|_| stream.set_write_timeout(Some(IDLE_TIMEOUT)));
-    let (Ok(()), Ok(read_half)) = (ready, stream.try_clone()) else { return };
-    let mut reader = BufReader::new(read_half);
-    let mut writer = stream;
+    let (Ok(()), Ok(read_half)) = (stream.set_nodelay(true), stream.try_clone()) else { return };
+    let mut reader = BufReader::new(Timed::new(read_half, limits.idle_timeout));
+    let mut writer = Timed::new(stream, limits.write_timeout);
     loop {
+        // Waiting for the next request is idle time; its first byte starts
+        // the clock on its headers, and the headers' end on its body.
+        reader.get_mut().within(None);
+        if !matches!(reader.fill_buf(), Ok(bytes) if !bytes.is_empty()) {
+            return;
+        }
+        reader.get_mut().within(Some(limits.header_timeout));
         let request = wire::read_head(&mut reader).and_then(|head| {
-            let body = wire::read_body(&head, &mut reader, &mut writer, MAX_BODY_BYTES)?;
+            reader.get_mut().within(Some(limits.body_timeout));
+            writer.within(Some(limits.body_timeout));
+            let body = wire::read_body(&head, &mut reader, &mut writer, limits.max_body_bytes)?;
             Ok((head, body))
         });
         let (head, body) = match request {
             Ok(request) => request,
-            Err(WireError::Refuse(status)) => return refuse(&mut reader, &mut writer, status),
+            Err(WireError::Refuse(status)) => return refuse(&mut reader, &mut writer, status, limits),
             Err(WireError::Gone) => return,
         };
         let close = !head.keep_alive();
@@ -154,6 +188,7 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>) {
             return;
         }
         let Ok(response) = response.recv() else { return };
+        writer.within(Some(limits.write_timeout));
         if wire::write_response(&mut writer, &response, head_only, close).is_err() || close {
             return;
         }
@@ -164,13 +199,14 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>) {
 /// bytes still unread makes the kernel send a reset, which can destroy the
 /// response before the client reads it, so read and discard for a moment
 /// first.
-fn refuse(reader: &mut impl Read, writer: &mut TcpStream, status: u16) {
+fn refuse(reader: &mut BufReader<Timed>, writer: &mut Timed, status: u16, limits: &Limits) {
+    writer.within(Some(limits.write_timeout));
     if wire::write_response(writer, &error_page(status), false, true).is_err() {
         return;
     }
-    writer.shutdown(Shutdown::Write).ok();
-    writer.set_read_timeout(Some(LINGER)).ok();
-    io::copy(&mut reader.take(LINGER_BYTES), &mut io::sink()).ok();
+    writer.get_ref().shutdown(Shutdown::Write).ok();
+    reader.get_mut().within(Some(LINGER));
+    io::copy(&mut io::Read::take(reader, LINGER_BYTES), &mut io::sink()).ok();
 }
 
 fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {

@@ -2,6 +2,7 @@
 
 mod controller;
 mod health;
+mod limits;
 mod params;
 mod request;
 mod response;
@@ -11,6 +12,7 @@ mod wire;
 
 pub use controller::{Action, Controller, action, error_response};
 pub use health::health;
+pub use limits::Limits;
 pub use params::{Params, parse_query};
 pub use response::{Response, error_page, reason, status};
 pub use request::Request;
