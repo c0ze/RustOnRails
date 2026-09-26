@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::marker::PhantomData;
 
 use crate::association::Preload;
@@ -5,6 +6,7 @@ use crate::records::from_row;
 use crate::{Ctx, Error, Handle, Model, Result, Value};
 
 mod calculate;
+mod loaded;
 mod sql;
 
 pub use calculate::Batches;
@@ -60,6 +62,9 @@ pub struct Relation<M: 'static> {
     limit: Option<i64>,
     offset: Option<i64>,
     includes: Vec<&'static dyn Preload<M>>,
+    /// The records once `load` ran: Rails' `loaded?` relation, whose
+    /// `size`, `any?`, `first` and `pluck` then use them.
+    loaded: RefCell<Option<Vec<Handle<M>>>>,
     marker: PhantomData<fn() -> M>,
 }
 
@@ -73,6 +78,7 @@ impl<M: 'static> Clone for Relation<M> {
             limit: self.limit,
             offset: self.offset,
             includes: self.includes.clone(),
+            loaded: RefCell::default(),
             marker: PhantomData,
         }
     }
@@ -88,6 +94,7 @@ impl<M: Model> Default for Relation<M> {
             limit: None,
             offset: None,
             includes: Vec::new(),
+            loaded: RefCell::default(),
             marker: PhantomData,
         }
     }
@@ -101,63 +108,81 @@ impl<M: Model> Relation<M> {
     /// The rows of `table` whose `owner_key` is `owner_id`, joined to this
     /// relation's table on `target_key`: what `has_many :through` builds.
     pub fn join_through(mut self, table: &'static str, target_key: &'static str, owner_key: &'static str, owner_id: Value) -> Self {
+        self.loaded = RefCell::default();
         self.join = Some(Join { table, target_key, owner_key, owner_id });
+        self
+    }
+
+    /// `none`: matches nothing.
+    pub fn none(mut self) -> Self {
+        self.loaded = RefCell::default();
+        self.filters.push(Filter::Sql("1=0", Vec::new()));
         self
     }
 
     /// `where(column: value)`. Enum columns take the label, as in Rails.
     pub fn where_eq(mut self, column: &str, value: impl Into<Value>) -> Self {
+        self.loaded = RefCell::default();
         self.filters.push(Filter::Eq(column.to_string(), value.into()));
         self
     }
 
     /// `where.not(column: value)`
     pub fn where_not(mut self, column: &str, value: impl Into<Value>) -> Self {
+        self.loaded = RefCell::default();
         self.filters.push(Filter::NotEq(column.to_string(), value.into()));
         self
     }
 
     /// `where(column: value..)`
     pub fn where_gte(mut self, column: &str, value: impl Into<Value>) -> Self {
+        self.loaded = RefCell::default();
         self.filters.push(Filter::Gte(column.to_string(), value.into()));
         self
     }
 
     /// `where(column: [a, b])`; an empty list matches nothing (`1=0`).
     pub fn where_in(mut self, column: &str, values: Vec<Value>) -> Self {
+        self.loaded = RefCell::default();
         self.filters.push(Filter::In(column.to_string(), values));
         self
     }
 
     /// `includes(:user)`: preloads the association after `load`.
     pub fn includes(mut self, association: &'static dyn Preload<M>) -> Self {
+        self.loaded = RefCell::default();
         self.includes.push(association);
         self
     }
 
     pub fn order_asc(mut self, column: &str) -> Self {
+        self.loaded = RefCell::default();
         self.orders.push((column.to_string(), "ASC"));
         self
     }
 
     pub fn order_desc(mut self, column: &str) -> Self {
+        self.loaded = RefCell::default();
         self.orders.push((column.to_string(), "DESC"));
         self
     }
 
     pub fn limit(mut self, n: i64) -> Self {
+        self.loaded = RefCell::default();
         self.limit = Some(n);
         self
     }
 
     /// `offset(n)`: skips `n` rows after the order.
     pub fn offset(mut self, n: i64) -> Self {
+        self.loaded = RefCell::default();
         self.offset = Some(n);
         self
     }
 
     /// `joins(:project)`; `joins(project: :memberships)` is two calls.
     pub fn joins(mut self, association: &impl Joinable) -> Self {
+        self.loaded = RefCell::default();
         self.joins.push(association.inner_join());
         self
     }
@@ -165,6 +190,7 @@ impl<M: Model> Relation<M> {
     /// `where(memberships: { user_id: 1 })`: a column of a joined table,
     /// cast by that table's model.
     pub fn where_on<J: Model>(mut self, column: &str, value: impl Into<Value>) -> Self {
+        self.loaded = RefCell::default();
         let value = J::behavior().query_value(column, J::cast_query(column, value.into()));
         self.filters.push(Filter::EqOn(J::TABLE, column.to_string(), value));
         self
@@ -174,6 +200,7 @@ impl<M: Model> Relation<M> {
     /// Rails does, each `?` replaced by its bind quoted as Rails' `quote`
     /// would. Rutile counts them when it compiles the call.
     pub fn where_sql(mut self, sql: &'static str, binds: Vec<Value>) -> Self {
+        self.loaded = RefCell::default();
         assert_eq!(sql.matches('?').count(), binds.len(), "`{sql}` has a different number of binds");
         self.filters.push(Filter::Sql(sql, binds));
         self
@@ -194,16 +221,29 @@ impl<M: Model> Relation<M> {
         }
     }
 
+    /// The records, loaded once: a relation kept in a local answers from
+    /// them afterwards, as Rails' does.
     pub fn load(&self, ctx: &mut Ctx) -> Result<Vec<Handle<M>>> {
+        if let Some(records) = self.cached() {
+            return Ok(records);
+        }
         let handles: Vec<Handle<M>> = self.fetch(ctx)?.into_iter().map(|record| ctx.adopt(record)).collect();
         for association in &self.includes {
             association.preload(ctx, &handles)?;
         }
+        *self.loaded.borrow_mut() = Some(handles.clone());
         Ok(handles)
     }
 
     /// `first`: orders by id unless the relation has an order already.
+    /// Loaded, it's the first record loaded; `limit(0)` has none.
     pub fn first(&self, ctx: &mut Ctx) -> Result<Option<Handle<M>>> {
+        if let Some(records) = self.cached() {
+            return Ok(records.first().copied());
+        }
+        if self.limit == Some(0) {
+            return Ok(None);
+        }
         let mut relation = self.clone().limit(1);
         if relation.orders.is_empty() {
             relation = relation.order_asc("id");
@@ -232,6 +272,10 @@ impl<M: Model> Relation<M> {
     /// query on the record's id. Nil, or a record without an id, is false.
     pub fn contains(&self, ctx: &mut Ctx, record: impl Into<Option<Handle<M>>>) -> Result<bool> {
         let Some(id) = record.into().and_then(|record| ctx[record].id()) else { return Ok(false) };
+        // Loaded, Rails compares the records by id.
+        if let Some(records) = self.cached() {
+            return Ok(records.iter().any(|loaded| ctx[*loaded].id() == Some(id)));
+        }
         // Like Rails, a relation with a limit or offset is loaded and
         // searched: filtering by the id first would change which rows they keep.
         if self.limit.is_some() || self.offset.is_some() {

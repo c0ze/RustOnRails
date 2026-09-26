@@ -1,3 +1,4 @@
+use crate::transaction::Outcome;
 use crate::{BeforeTypeCast, Ctx, Error, Event, Handle, Model, Record, RecordInvalid, Result, Value, now, validation, write};
 
 impl Ctx {
@@ -14,17 +15,26 @@ impl Ctx {
         Ok(self.errors(record).is_empty())
     }
 
-    /// `save`: false when validations fail or a before callback aborts.
-    /// Everything runs in a transaction (a savepoint when nested); on
-    /// failure the record keeps its unsaved state and id.
+    /// `save`: false when validations fail, a before callback aborts, or a
+    /// callback raises `ActiveRecord::Rollback`. Everything runs in a
+    /// transaction (joining one already open); on failure the record keeps
+    /// its unsaved state and id.
     pub fn save<M: Model>(&mut self, record: Handle<M>) -> Result<bool> {
+        Ok(self.save_outcome(record)? == Outcome::Committed)
+    }
+
+    fn save_outcome<M: Model>(&mut self, record: Handle<M>) -> Result<Outcome> {
         let before = (self.slot(record).saved.clone(), self[record].get("id"), self[record].before_type_cast().clone());
-        let outcome = self.transaction(|ctx| ctx.create_or_update(record));
+        let outcome = self.transaction_outcome(|ctx| {
+            ctx.remember(record);
+            ctx.create_or_update(record)
+        });
         match outcome {
-            Ok(true) => Ok(true),
-            Ok(false) | Err(Error::Abort) => {
+            // A rolled-back transaction put the record back itself; a joined one leaves it.
+            Ok(Outcome::Committed) | Ok(Outcome::RolledBack) => outcome,
+            Ok(Outcome::Failed) | Err(Error::Abort) => {
                 self.restore(record, before)?;
-                Ok(false)
+                Ok(Outcome::Failed)
             }
             Err(error) => {
                 self.restore(record, before)?;
@@ -33,9 +43,10 @@ impl Ctx {
         }
     }
 
-    /// `save!`
+    /// `save!`. A Rollback a callback raised makes it return nothing, as in
+    /// Rails, rather than raise.
     pub fn save_bang<M: Model>(&mut self, record: Handle<M>) -> Result<()> {
-        if self.save(record)? {
+        if self.save_outcome(record)? != Outcome::Failed {
             return Ok(());
         }
         let errors = self.errors(record).clone();
@@ -109,9 +120,10 @@ impl Ctx {
     }
 
     /// `destroy`: runs the destroy callbacks and deletes the row. False
-    /// when a before_destroy callback aborts.
+    /// when a before_destroy callback aborts or a callback raises Rollback.
     pub fn destroy<M: Model>(&mut self, record: Handle<M>) -> Result<bool> {
-        let outcome = self.transaction(|ctx| {
+        let outcome = self.transaction_outcome(|ctx| {
+            ctx.remember(record);
             ctx.run_callbacks(record, Event::BeforeDestroy)?;
             if let Ok(id) = ctx.saved_id(record) {
                 write::delete_row::<M>(ctx, id)?;
@@ -121,7 +133,7 @@ impl Ctx {
             Ok(true)
         });
         match outcome {
-            Ok(done) => Ok(done),
+            Ok(outcome) => Ok(outcome == Outcome::Committed),
             Err(error) => {
                 self.slot_mut(record).destroyed = false;
                 if matches!(error, Error::Abort) { Ok(false) } else { Err(error) }

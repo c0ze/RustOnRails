@@ -8,6 +8,9 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 - `Relation::batches` is `find_each`: by id, after the last id seen, with the relation's limit capping the total.
 - `Ctx::transaction_block` and `Request::transaction_block` run app code's `transaction do ... end`: the block's value, or `None` on `Error::Rollback`. A transaction inside an open one joins it, as in Active Record, so `save` inside a block no longer takes a savepoint of its own; the test's own transaction can't be joined, like Rails' fixture transaction.
 - `sum_integers` and `sum_floats` are `Array#sum`, raising `Error::NilCoerced` on a nil element.
+- A relation keeps the records `load` read: `size`, `is_any`, `first`, `contains`, `pluck` and `batches` answer from them, as a loaded `ActiveRecord::Relation` does; builders start unloaded.
+- A rollback puts back the records the transaction touched (id, saved state, destroyed), and `Error::Rollback` from a callback makes `save` false and `save!` return.
+- `HasMany::of` an unsaved owner is `Relation::none`; `limit(0).first` is `None`; enum aggregates are integers.
 
 ## 0.6.0
 

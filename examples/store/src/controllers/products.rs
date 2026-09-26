@@ -113,9 +113,7 @@ impl ProductsController {
     // app/controllers/products_controller.rb:28
     pub fn stats(&mut self, req: &mut Request) -> Result<Response> {
         let count = Product::all().count(&mut req.ctx)?;
-        let count_2 = Product::all()
-            .where_eq("active", true)
-            .count(&mut req.ctx)?;
+        let size = Product::all().where_eq("active", true).size(&mut req.ctx)?;
         let stock = Product::all().sum::<i64>(&mut req.ctx, "stock")?;
         let price_cents = Product::all().minimum::<i64>(&mut req.ctx, "price_cents")?;
         let price_cents_2 = Product::all().maximum::<i64>(&mut req.ctx, "price_cents")?;
@@ -129,20 +127,20 @@ impl ProductsController {
             .order_asc("name")
             .limit(2)
             .sum::<i64>(&mut req.ctx, "stock")?;
-        let count_3 = Product::all()
+        let count_2 = Product::all()
             .order_asc("name")
             .limit(2)
             .count(&mut req.ctx)?;
         let sold_out = Product::all().where_eq("stock", 0).exists(&mut req.ctx)?;
         let all_active = !Product::all()
             .where_eq("active", false)
-            .exists(&mut req.ctx)?;
+            .is_any(&mut req.ctx)?;
         let product = Product::all()
             .order_asc("price_cents")
             .first(&mut req.ctx)?;
         Ok(Response::json(
             status::OK,
-            json!({ "count": count, "active": count_2, "units": stock, "cheapest_cents": price_cents, "priciest_cents": price_cents_2, "first_name": name, "names": names, "units_of_two": stock_2, "count_of_two": count_3, "sold_out": sold_out, "all_active": all_active, "cheapest": product.and_then(|product| req.ctx[product].name.clone()) }),
+            json!({ "count": count, "active": size, "units": stock, "cheapest_cents": price_cents, "priciest_cents": price_cents_2, "first_name": name, "names": names, "units_of_two": stock_2, "count_of_two": count_2, "sold_out": sold_out, "all_active": all_active, "cheapest": product.and_then(|product| req.ctx[product].name.clone()) }),
         ))
     }
 
@@ -192,7 +190,33 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:60
+    // app/controllers/products_controller.rb:62
+    pub fn restock_low(&mut self, req: &mut Request) -> Result<Response> {
+        let low = Product::all()
+            .where_eq("active", true)
+            .where_sql("stock < ?", vec![5.into()]);
+        let records = low.load(&mut req.ctx)?;
+        for product in records {
+            let value = req.ctx[product].stock.ok_or(Error::Nil { what: "+" })? + 10;
+            req.ctx[product].stock = Some(value);
+            req.ctx.save_bang(product)?;
+        }
+        let size = low.size(&mut req.ctx)?;
+        let any = low.is_any(&mut req.ctx)?;
+        let records_2 = low.load(&mut req.ctx)?;
+        let mut mapped = Vec::with_capacity(records_2.len());
+        for product_2 in records_2 {
+            mapped.push(req.ctx[product_2].name.clone());
+        }
+        let product_3 = low.first(&mut req.ctx)?;
+        let first = product_3.and_then(|product| req.ctx[product].name.clone());
+        Ok(Response::json(
+            status::OK,
+            json!({ "restocked": size, "any": any, "names": Json::from(mapped), "first": first, "still_low": low.count(&mut req.ctx)? }),
+        ))
+    }
+
+    // app/controllers/products_controller.rb:69
     pub fn deactivate_sold_out(&mut self, req: &mut Request) -> Result<Response> {
         let mut deactivated = 0;
         let mut batches = Product::all().where_eq("active", true).batches(2);
@@ -211,7 +235,7 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:73
+    // app/controllers/products_controller.rb:82
     pub fn double(&mut self, req: &mut Request) -> Result<Response> {
         let value = req.params.fetch("value", 1);
         Ok(Response::json(
@@ -220,7 +244,7 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:78
+    // app/controllers/products_controller.rb:87
     pub fn availability(&mut self, req: &mut Request) -> Result<Response> {
         let id = req.ctx[self.product.ok_or(Error::Nil { what: "id" })?].id;
         let availability = value_json(Product::availability(
@@ -235,7 +259,7 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:82
+    // app/controllers/products_controller.rb:91
     pub fn quote(&mut self, req: &mut Request) -> Result<Response> {
         let quantity_2 = req.params.fetch("quantity", 1).to_i()?;
         let quantity = self.amount(req, quantity_2)?;
@@ -251,20 +275,20 @@ impl ProductsController {
         ))
     }
 
-    // app/controllers/products_controller.rb:90
+    // app/controllers/products_controller.rb:99
     fn set_product(&mut self, req: &mut Request) -> Result<()> {
         self.product = Some(Product::find(&mut req.ctx, req.params.value("id"))?);
         Ok(())
     }
 
-    // app/controllers/products_controller.rb:94
+    // app/controllers/products_controller.rb:103
     fn product_params(&mut self, req: &mut Request) -> Result<Attributes> {
         Ok(req
             .params
             .expect("product", &["name", "price_cents", "stock", "active"])?)
     }
 
-    // app/controllers/products_controller.rb:100
+    // app/controllers/products_controller.rb:109
     fn amount(&mut self, _req: &mut Request, requested: i64) -> Result<i64> {
         Ok(i64::max(requested, 0))
     }

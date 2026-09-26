@@ -25,6 +25,11 @@ pub fn routes() -> Router {
                 ProductsController::deactivate_sold_out,
             ),
         )
+        // POST /products/restock_low(.:format) products#restock_low
+        .post(
+            "/products/restock_low(.:format)",
+            action("restock_low", ProductsController::restock_low),
+        )
         // POST /products/double(.:format) products#double
         .post(
             "/products/double(.:format)",
