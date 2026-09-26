@@ -2,6 +2,25 @@
 
 RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
 
+## 0.10.0
+
+- **Sessions:**
+  - Rails 8.1's cookie store: `CookieKey` derives the key as Rails does (PBKDF2-SHA256 of `secret_key_base`) and seals and opens AES-256-GCM cookies in Rails' `_rails` envelope, with the cookie's name as the purpose.
+  - `Session` loads and sends back the session under the same rules as Rails.
+  - `Cookies` parses and sets plain cookies with Rack's escaping.
+  - `Router::session_store` and `server::Config::secret_key_base` set it up.
+  - Error pages carry no cookies, as in Rails.
+- **Jobs:**
+  - `jobs::Job::perform_later` pushes Sidekiq 8's Active Job payload.
+  - `jobs::work` is a Sidekiq worker: it runs each job in a fresh `Ctx`, uses Sidekiq's retry backoff and its retry and dead sets, and moves retries that are due back onto their queues.
+  - Records go by GlobalID. Active Job's `SerializationError`, `DeserializationError` and `UnknownJobClassError` come with Rails' messages (`Error::Raised`).
+  - `jobs::redis` is a small RESP client that takes a password or an ACL user, and a db index.
+- **Views:**
+  - `View` is the output buffer a compiled template writes. It escapes as Action View does, and keeps `content_for` with Rails' presence rules and the layout's `yield`.
+  - `html_escape`, `link_to` and `Response::html`.
+  - `path_segment` and `ToParam` serve route helpers: each segment is escaped as Journey escapes it, and a nil id gives Rails' `UrlGenerationError`.
+- `Value::inspect`; `find`'s `RecordNotFound` message quotes a String id, as Rails' does.
+
 ## 0.9.0
 
 - No runtime changes: `rutile package` vendors this crate beside the app's, with its `Cargo.lock`, so a release image builds offline. The examples are regenerated.
