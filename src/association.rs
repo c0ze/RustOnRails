@@ -100,8 +100,13 @@ impl<M, T> HasMany<M, T> {
 
 impl<M: Model, T: Model> HasMany<M, T> {
     /// `post.comments`: a relation scoped to the owner.
+    /// An owner that was never saved has none: Rails doesn't look for the
+    /// rows whose key is NULL.
     pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
-        T::all().where_eq(self.foreign_key, ctx[owner].get("id"))
+        match ctx[owner].get("id") {
+            Value::Nil => T::all().none(),
+            id => T::all().where_eq(self.foreign_key, id),
+        }
     }
 
     /// `post.comments.new(attributes)`: sets the foreign key and points the

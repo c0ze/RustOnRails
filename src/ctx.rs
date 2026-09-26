@@ -60,6 +60,9 @@ pub struct Ctx {
     /// The test's own transaction doesn't, like Rails' fixture transaction,
     /// so a transaction a test runs gets a savepoint as it would in Rails.
     pub(crate) joinable: bool,
+    /// For each transaction open (not joined), the records it touched and
+    /// their state before, to put back if it rolls back.
+    pub(crate) frames: Vec<Vec<crate::transaction::Remembered>>,
     pub(crate) tables: HashMap<TypeId, Box<dyn Any + Send>>,
 }
 
@@ -74,7 +77,7 @@ impl Ctx {
 
     /// A fresh unit of work on a connection that keeps its prepared statements.
     pub fn resume(connection: Connection) -> Self {
-        Self { connection, depth: 0, joinable: false, tables: HashMap::new() }
+        Self { connection, depth: 0, joinable: false, frames: Vec::new(), tables: HashMap::new() }
     }
 
     /// Opens a transaction that is never committed; dropping the `Ctx`

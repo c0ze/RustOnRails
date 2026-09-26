@@ -27,8 +27,9 @@ impl<M: Model> Relation<M> {
     fn aggregate<T: FromValue>(&self, ctx: &mut Ctx, function: &str, column: &str) -> Result<Option<T>> {
         let (sql, params) = self.select_sql(&format!("{function}({}.{})", quote(M::TABLE), quote(column)), false);
         let rows = self.run(ctx, &sql, &params)?;
+        // An enum's minimum is its integer: Rails casts by the enum's subtype.
         let value = match rows.first() {
-            Some(row) => M::behavior().from_database(column, read(row, 0)?),
+            Some(row) => read(row, 0)?,
             None => Value::Nil,
         };
         T::from_value(value)
@@ -37,6 +38,9 @@ impl<M: Model> Relation<M> {
     /// `pluck(:column)`: the column of each row, in the relation's order,
     /// enum integers as their labels.
     pub fn pluck<T: FromValue>(&self, ctx: &mut Ctx, column: &str) -> Result<Vec<Option<T>>> {
+        if let Some(values) = self.pluck_loaded(ctx, column) {
+            return values;
+        }
         let (sql, params) = self.select_sql(&format!("{}.{}", quote(M::TABLE), quote(column)), true);
         let rows = self.run(ctx, &sql, &params)?;
         rows.iter().map(|row| T::from_value(M::behavior().from_database(column, read(row, 0)?))).collect()
@@ -49,9 +53,10 @@ impl<M: Model> Relation<M> {
     }
 
     /// `find_each(batch_size: size)`: the records in batches by id, each
-    /// batch a query of its own, so memory holds one batch at a time.
+    /// batch a query of its own. (The records stay in the request's `Ctx`
+    /// until it ends, as handles into it may.)
     pub fn batches(&self, size: i64) -> Batches<M> {
-        Batches { remaining: self.limit, relation: self.clone(), size, last: None, done: false }
+        Batches { remaining: self.limit, relation: self.clone(), size, last: None, done: false, loaded: self.cached() }
     }
 }
 
@@ -65,12 +70,23 @@ pub struct Batches<M: 'static> {
     remaining: Option<i64>,
     last: Option<i64>,
     done: bool,
+    /// A loaded relation's records, which Rails batches by id in memory.
+    loaded: Option<Vec<Handle<M>>>,
 }
 
 impl<M: Model> Batches<M> {
     /// The next batch, loaded into the `Ctx` with its `includes`, or None
     /// when there are no more.
     pub fn next(&mut self, ctx: &mut Ctx) -> Result<Option<Vec<Handle<M>>>> {
+        if let Some(records) = &mut self.loaded {
+            if self.last.is_none() {
+                records.sort_by_key(|record| std::cmp::Reverse(ctx[*record].id()));
+                self.last = Some(0);
+            }
+            let size = usize::try_from(self.size).unwrap_or(usize::MAX);
+            let batch: Vec<Handle<M>> = (0..size).map_while(|_| records.pop()).collect();
+            return Ok(if batch.is_empty() { None } else { Some(batch) });
+        }
         if self.done {
             return Ok(None);
         }
