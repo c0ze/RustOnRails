@@ -47,7 +47,7 @@ There is no identity map: like Rails, each load makes a new record, so two `Post
 - `Rails.cache`: values copied in and out of moka or Redis
 - class variables and mutable globals: rejected by `rutile check` (they aren't safe under multi-threaded Puma either)
 
-**Batches.** `find_each` and `in_batches` open a nested arena per batch and drop it after, so a job walking ten million rows keeps flat memory. The trade-off is that memory used inside one huge request is only returned when it ends; batching is the answer there too.
+**Batches** (not built yet). `find_each` and `in_batches` will open a nested arena per batch and drop it after, so a job walking ten million rows keeps flat memory. The trade-off is that memory used inside one huge request is only returned when it ends; batching is the answer there too.
 
 ## Records
 
@@ -104,13 +104,13 @@ let comment = Post::COMMENTS.build(ctx, post, Comment::from_attributes(&attribut
 
 `belongs_to` targets are cached on the owner (per foreign key, so a changed key reloads), `includes` fills that cache with one `IN` query, and `has_many#build` points the child back at the very owner record, which is Rails' automatic `inverse_of`. `dependent: :destroy` is an explicit `before_destroy` calling `destroy_all`, and `dependent: :nullify` one calling `nullify_all`, in declaration order.
 
-A controller is a `Default` struct whose fields are its instance variables. `Controller::before` is the `before_action` chain written out as a match on the action name, `rescue` is `rescue_from`, and `wrap_parameters` gives the wrapper key and attribute names. Routes are built in `routes.rb` order with `action::<Controller>("show", Controller::show)`, and a constraint that fails falls through to the next route. An error nobody rescues becomes Rails' default status and the exceptions app's `{"status":404,"error":"Not Found"}`.
+A controller is a `Default` struct whose fields are its instance variables. `Controller::before` is the `before_action` chain written out as a match on the action name, `rescue` is `rescue_from`, and `wrap_parameters` gives the wrapper key and attribute names. Routes are built in `routes.rb` order with `action("show", PostsController::show)`, and a constraint that fails falls through to the next route. An error nobody rescues becomes Rails' default status and the exceptions app's `{"status":404,"error":"Not Found"}`.
 
 The server has a fixed pool of worker threads, each owning one Postgres connection and building a fresh `Ctx` per request; a panicking handler costs a 500 and that worker's connection, not the process. A `Connection` keeps the statements prepared on it across requests, up to Rails' `statement_limit` of 1000, so Postgres parses and plans each query once per connection. Relations with a SQL fragment run unprepared, as in Rails, since their binds are written into the SQL. Without the cache, Postgres spent about 3.5 times the CPU per request that it spends for Rails, and the tracker's joined lookup ran at a fifth of its speed now. In front of the pool, each connection gets a thread that reads requests in full (`src/http/wire.rs`): heads up to 16 KiB, bodies up to 10 MiB by Content-Length or chunked, never both, with 20-second read and write timeouts, so a slow or lying client holds its own thread and never a worker. Each response goes out in one write with `TCP_NODELAY` set.
 
 This replaced tiny_http, which could be crashed by a single request declaring a huge body (it drained unread bodies with one allocation of the declared size), treated an early disconnect as the end of a body, and held every multi-segment response about 40 ms for the client's delayed ACK. Request handling follows Rails: HEAD runs the matching GET route without the body, a malformed JSON body is a 400 once a route matches, and only the JSON media types are parsed as JSON; form bodies become params.
 
-`examples/blog` and `examples/tracker` are Rutile's two example apps as `rutile build` generates them: models, controllers and `routes.rs` in the manifest's route order, one file per Ruby file. The blog started as a hand port, written the way codegen would, and plan 5 replaced it with generated code that passes the same tests; the tracker was generated from the start. Rutile's `rake example:verify` (`EXAMPLE=tracker` for the tracker) regenerates one and runs the Rails app's integration tests against it, and `rake example:benchmark` compares the blog with Puma using `tools/loadgen`, a small keep-alive load generator in this workspace.
+`examples/blog` and `examples/tracker` are Rutile's two example apps as `rutile build` generates them: models, controllers and `routes.rs` in the manifest's route order, one file per Ruby file. The blog started as a hand port, written the way codegen would, and plan 5 replaced it with generated code that passes the same tests; the tracker was generated from the start. Rutile's `rake example:verify` (`EXAMPLE=tracker` for the tracker) regenerates one and runs the Rails app's integration tests against it, and `rake example:benchmark` compares either app with Puma using `tools/loadgen`, a small keep-alive load generator in this workspace.
 
 ## Planned modules
 
@@ -142,7 +142,7 @@ Pundit needs no adapter beyond `authorize`, since Rutile transpiles the policies
 
 ## Errors
 
-Generated code returns `Result<_, rustonrails::Error>`. `RecordNotFound` maps to 404 and `RecordInvalid` to 422 by default, as in Rails. `rescue_from` registrations from the manifest override the mapping per controller. Unexpected errors log with the Ruby source location from the generated code's `// path:line` comments and return 500.
+Generated code returns `Result<_, rustonrails::Error>`. `RecordNotFound` maps to 404 and `RecordInvalid` to 422 by default, as in Rails. `rescue_from` registrations from the manifest override the mapping per controller. Unexpected errors are logged with the request's method and path and return 500; the generated code's `// path:line` comments lead from a Rust backtrace to the Ruby.
 
 ## Open questions
 
