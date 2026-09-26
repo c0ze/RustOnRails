@@ -6,7 +6,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Once;
 
-use postgres::{Client, NoTls};
 
 use crate::Ctx;
 
@@ -26,19 +25,19 @@ pub fn prepare(schema: &str) {
 /// A `Ctx` for one test.
 pub fn ctx(schema: &str) -> Ctx {
     prepare(schema);
-    let client = Client::connect(&database_url(), NoTls).expect("connect to the test database");
+    let client = crate::connect::connect(&database_url()).expect("connect to the test database");
     Ctx::rolled_back(client).expect("begin the test transaction")
 }
 
 fn load(schema: &str) {
     let url = database_url();
     let (base, name) = url.rsplit_once('/').expect("database URL ends in /name");
-    let mut admin = Client::connect(&format!("{base}/postgres"), NoTls).expect("connect to postgres");
+    let mut admin = crate::connect::connect(&format!("{base}/postgres")).expect("connect to postgres");
     admin.batch_execute("SELECT pg_advisory_lock(7351)").unwrap();
     if admin.query("SELECT 1 FROM pg_database WHERE datname = $1", &[&name]).unwrap().is_empty() {
         admin.batch_execute(&format!("CREATE DATABASE \"{name}\"")).unwrap();
     }
-    let mut db = Client::connect(&url, NoTls).unwrap();
+    let mut db = crate::connect::connect(&url).unwrap();
     let mut hasher = DefaultHasher::new();
     schema.hash(&mut hasher);
     let digest = hasher.finish().to_string();

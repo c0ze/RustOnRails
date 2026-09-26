@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 
 use postgres::error::{Severity, SqlState};
 use postgres::types::ToSql;
-use postgres::{Client, NoTls, Row, Statement};
+use postgres::{Client, Row, Statement};
 
 use crate::{Result, Value};
 
@@ -28,8 +28,9 @@ impl Connection {
         Self { client, broken: false, statements: HashMap::new(), order: VecDeque::new() }
     }
 
+    /// With TLS as the URL's `sslmode` asks, as libpq reads it.
     pub fn connect(url: &str) -> Result<Self> {
-        Ok(Self::new(Client::connect(url, NoTls)?))
+        Ok(Self::new(crate::connect::connect(url)?))
     }
 
     /// Whether the database closed it (restart, failover, idle kill). The

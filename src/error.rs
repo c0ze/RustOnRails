@@ -43,6 +43,9 @@ pub enum Error {
     ParameterMissing { key: &'static str },
     /// Anything the database reported.
     Db(postgres::Error),
+    /// A database URL whose TLS settings can't be used: an `sslmode`
+    /// libpq doesn't know, an `sslrootcert` that can't be read.
+    Connect(String),
 }
 
 impl fmt::Display for Error {
@@ -62,6 +65,7 @@ impl fmt::Display for Error {
             Error::InvalidEnum { attribute, value } => write!(f, "'{value}' is not a valid {attribute}"),
             Error::NotPersisted { model } => write!(f, "cannot update a new {model}"),
             Error::ParameterMissing { key } => write!(f, "param is missing or the value is empty or invalid: {key}"),
+            Error::Connect(message) => write!(f, "{message}"),
             Error::Db(e) => match e.as_db_error() {
                 Some(db) => write!(f, "{}: {}", db.severity(), db.message()),
                 None => write!(f, "{e}"),
