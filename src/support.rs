@@ -25,6 +25,41 @@ pub fn sum_floats<V: Into<Option<f64>>>(start: f64, values: impl IntoIterator<It
     Ok(sum)
 }
 
+/// `Integer#/`: rounds toward negative infinity, as Ruby does.
+pub fn div_integers(a: i64, b: i64) -> Result<i64> {
+    if b == 0 {
+        return Err(Error::ZeroDivision);
+    }
+    let quotient = a.checked_div(b).ok_or_else(|| Error::Overflow { value: format!("{a} / {b}") })?;
+    Ok(if a % b != 0 && ((a < 0) != (b < 0)) { quotient - 1 } else { quotient })
+}
+
+/// `Integer#%`: the remainder takes the divisor's sign.
+pub fn mod_integers(a: i64, b: i64) -> Result<i64> {
+    if b == 0 {
+        return Err(Error::ZeroDivision);
+    }
+    // i64::MIN % -1 overflows in Rust; it's 0 in Ruby.
+    let remainder = a.checked_rem(b).unwrap_or(0);
+    Ok(if remainder != 0 && ((remainder < 0) != (b < 0)) { remainder + b } else { remainder })
+}
+
+/// `Float#%`, as Ruby's `flodivmod` computes it: the divisor's sign, a
+/// zero divisor raising, an infinite one leaving a finite dividend.
+pub fn mod_floats(x: f64, y: f64) -> Result<f64> {
+    if y.is_nan() {
+        return Ok(y);
+    }
+    if y == 0.0 {
+        return Err(Error::ZeroDivision);
+    }
+    let mut modulo = if x == 0.0 || (y.is_infinite() && !x.is_infinite()) { x } else { x % y };
+    if y * modulo < 0.0 {
+        modulo += y;
+    }
+    Ok(modulo)
+}
+
 /// Ruby's `String#strip`, `#downcase` and `#upcase`. Rust's `trim` also
 /// strips non-breaking and other Unicode spaces, and `to_lowercase` turns a
 /// final Σ into ς; Ruby does neither.

@@ -37,7 +37,7 @@ fn to_i(s: &str) -> i64 {
 }
 
 /// Ruby's `String#to_f`: the leading number, 0.0 when there is none.
-fn to_f(s: &str) -> f64 {
+pub(crate) fn to_f(s: &str) -> f64 {
     LEADING_FLOAT.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0.0)
 }
 
