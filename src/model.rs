@@ -12,6 +12,9 @@ pub trait Record: Clone + Default + PartialEq + Send + 'static {
     fn set(&mut self, column: &str, value: Value) -> Result<()>;
     /// A query value cast by the column's type (`where(user_id: "5")`).
     fn cast_query(column: &str, value: Value) -> Value;
+    /// 1 when a query value lies above everything the column can hold, -1
+    /// below, 0 otherwise: Rails' `unboundable?`.
+    fn query_bound(column: &str, value: &Value) -> i8;
     #[doc(hidden)]
     fn before_type_cast(&self) -> &BeforeTypeCast;
     #[doc(hidden)]
@@ -174,6 +177,13 @@ macro_rules! model {
                 match column {
                     $(stringify!($field) => <$ty as $crate::FromValue>::query(value),)*
                     _ => value,
+                }
+            }
+
+            fn query_bound(column: &str, value: &$crate::Value) -> i8 {
+                match column {
+                    $(stringify!($field) => <$ty as $crate::FromValue>::bound(value),)*
+                    _ => 0,
                 }
             }
 

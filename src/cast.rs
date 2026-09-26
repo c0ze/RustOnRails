@@ -25,6 +25,11 @@ pub trait FromValue: Sized {
     {
         Self::serialize(value).map_or(Value::Nil, Into::into)
     }
+
+    /// 1 when `value` is above every value of this type, -1 below, else 0.
+    fn bound(_value: &Value) -> i8 {
+        0
+    }
 }
 
 static LEADING_INTEGER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[+-]?\d+").expect("regex"));
@@ -59,8 +64,24 @@ impl FromValue for i64 {
         }
     }
 
-    /// A number too big for a bigint keeps its value, so binding it fails
-    /// rather than matching whatever number the assignment cast gives.
+    /// Past a bigint either way, as Rails' `unboundable?` reads it: no row
+    /// equals it, every row differs from it.
+    fn bound(value: &Value) -> i8 {
+        let negative = match value {
+            Value::Str(s) if LEADING_INTEGER.is_match(s) => s.trim_start().starts_with('-'),
+            Value::Float(f) => f.is_sign_negative(),
+            _ => return 0,
+        };
+        match value.to_i() {
+            Err(Error::Overflow { .. }) if negative => -1,
+            Err(Error::Overflow { .. }) => 1,
+            _ => 0,
+        }
+    }
+
+    /// A number too big for a bigint keeps its value, so a bind that gets
+    /// past `bound` fails rather than matching whatever number the
+    /// assignment cast gives.
     fn query(value: Value) -> Value {
         match value {
             Value::Str(_) | Value::Float(_) if matches!(value.to_i(), Err(Error::Overflow { .. })) => value,

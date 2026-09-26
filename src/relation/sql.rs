@@ -55,7 +55,8 @@ impl<M: Model> Relation<M> {
                     let cast = |v: &Value| M::behavior().query_value(column, M::cast_query(column, v.clone()));
                     let mut any = Vec::new();
                     if let [one] = given.as_slice() {
-                        match cast(one) {
+                        let value = if M::query_bound(column, one) == 0 { cast(one) } else { Value::Nil };
+                        match value {
                             Value::Nil if M::behavior().enum_for(column).is_some() => any.push(format!("{target} IS NULL")),
                             Value::Nil => {}
                             value => {
@@ -64,7 +65,9 @@ impl<M: Model> Relation<M> {
                             }
                         }
                     } else {
-                        let cast: Vec<Value> = given.into_iter().map(cast).filter(|v| !v.is_nil()).collect();
+                        // A value past the column's range leaves the list too.
+                        let cast: Vec<Value> =
+                            given.into_iter().filter(|v| M::query_bound(column, v) == 0).map(cast).filter(|v| !v.is_nil()).collect();
                         if !cast.is_empty() {
                             let start = params.len();
                             params.extend(cast);
@@ -112,6 +115,19 @@ impl<M: Model> Relation<M> {
                 Filter::Gte(c, v) => (c, ">=", v),
             };
             let target = format!("{table}.{}", quote(column));
+            // Past the column's range, Rails' unboundable?: nothing equals
+            // it, everything differs, and a range from it is empty or open.
+            match (M::query_bound(column, value), op) {
+                (0, _) => {}
+                (_, "=") | (1, ">=") => {
+                    sql.push_str("1=0");
+                    continue;
+                }
+                _ => {
+                    sql.push_str("1=1");
+                    continue;
+                }
+            }
             // Rails' QueryAttribute: nil is IS NULL, but a value that casts
             // to nil ("" or "abc" for an integer) binds NULL and matches no
             // row, except for an enum, whose unknown label reads as nil.

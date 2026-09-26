@@ -166,7 +166,8 @@ impl<M: Model> Relation<M> {
     pub fn where_on<J: Model>(mut self, column: &str, value: impl Into<Value>) -> Self {
         let given = value.into();
         let value = J::behavior().query_value(column, J::cast_query(column, given.clone()));
-        let never = value.is_nil() && !given.is_nil() && J::behavior().enum_for(column).is_none();
+        let never = J::query_bound(column, &given) != 0
+            || (value.is_nil() && !given.is_nil() && J::behavior().enum_for(column).is_none());
         self.filters.push(if never { Filter::Never } else { Filter::EqOn(J::TABLE, column.to_string(), value) });
         self
     }

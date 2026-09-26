@@ -227,3 +227,23 @@ fn test_a_value_that_casts_to_nil_matches_nothing() {
     assert_eq!(all, Article::all().where_gte("published_at", Value::Nil).count(&mut ctx).unwrap());
     assert_eq!(0, Article::all().joins(&Article::AUTHOR).where_on::<Author>("id", "").count(&mut ctx).unwrap());
 }
+
+/// A number past a bigint is what Rails calls unboundable, and this is the
+/// SQL Rails 8.1 writes for each case: `find` of it is RecordNotFound (a
+/// 404), not a bind error (a 500).
+#[test]
+fn test_an_integer_past_a_bigint_is_unboundable_as_in_rails() {
+    let mut ctx = support::ctx();
+    let ann = author(&mut ctx, "ann");
+    article(&mut ctx, ann, "a");
+    let (huge, below): (Value, Value) = ("99999999999999999999".into(), "-99999999999999999999".into());
+    let sql = |relation: rustonrails::Relation<Article>| relation.to_sql().0;
+    assert!(sql(Article::all().where_eq("user_id", huge.clone())).ends_with("WHERE 1=0"));
+    assert!(sql(Article::all().where_not("user_id", huge.clone())).ends_with("WHERE 1=1"));
+    assert!(sql(Article::all().where_gte("user_id", huge.clone())).ends_with("WHERE 1=0"));
+    assert!(sql(Article::all().where_gte("user_id", below)).ends_with("WHERE 1=1"));
+    assert!(sql(Article::all().where_in("user_id", vec![huge.clone(), 1.into()])).ends_with(r#"WHERE "posts"."user_id" IN ($1)"#));
+    assert!(sql(Article::all().where_in("user_id", vec![huge.clone()])).ends_with("WHERE 1=0"));
+    assert!(sql(Article::all().where_in("user_id", vec![Value::Float(1e20)])).ends_with("WHERE 1=0"));
+    assert!(matches!(Article::find(&mut ctx, huge), Err(rustonrails::Error::RecordNotFound { .. })));
+}
