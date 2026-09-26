@@ -2,6 +2,10 @@
 
 RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
 
+## 0.9.0
+
+- No runtime changes: `rutile package` vendors this crate beside the app's, with its `Cargo.lock`, so a release image builds offline. The examples are regenerated.
+
 ## 0.8.0
 
 - `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. An Integer and a Float compare exactly.
