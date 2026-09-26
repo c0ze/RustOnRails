@@ -67,6 +67,14 @@ fn test_where_in() {
     let (mut ctx, fx) = setup();
     assert_eq!(2, Post::all().where_in("id", vec![Value::Int(fx.draft), Value::Int(fx.published_new)]).count(&mut ctx).unwrap());
     assert_eq!(0, Post::all().where_in("id", vec![]).count(&mut ctx).unwrap());
+    // As Rails 8.1 writes them: one value left after the nils is built like
+    // where(status: value), where an unknown label is IS NULL; more are an
+    // IN list, where it's a NULL bind that matches nothing.
+    let sql = |values: Vec<Value>| Post::all().where_in("status", values).to_sql().0;
+    assert!(sql(vec!["archived".into()]).ends_with(r#"WHERE "posts"."status" IS NULL"#));
+    assert!(sql(vec!["archived".into(), "gone".into()]).ends_with("WHERE 1=0"));
+    assert!(sql(vec!["archived".into(), "draft".into()]).ends_with(r#"WHERE "posts"."status" IN ($1)"#));
+    assert!(sql(vec!["draft".into()]).ends_with(r#"WHERE "posts"."status" = $1"#));
 }
 
 #[test]

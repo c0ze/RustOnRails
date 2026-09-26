@@ -46,22 +46,31 @@ impl<M: Model> Relation<M> {
             let (column, op, value) = match filter {
                 Filter::In(column, values) => {
                     let target = format!("{table}.{}", quote(column));
-                    // Rails takes the nils out as given; a value that casts to
-                    // nil stays in the list as a NULL bind, which matches no row.
+                    // Rails' ArrayHandler: the nils given come out first. One
+                    // value left is built as `where(x: value)` would be; more
+                    // are an IN list, where a value that casts to nil is a NULL
+                    // bind and matches no row. The nils add `OR x IS NULL`.
                     let nils = values.iter().any(Value::is_nil);
-                    let cast: Vec<Value> = values
-                        .iter()
-                        .filter(|v| !v.is_nil())
-                        .map(|v| M::behavior().query_value(column, M::cast_query(column, v.clone())))
-                        .filter(|v| !v.is_nil())
-                        .collect();
-                    // Rails: `x IN (...)`, `OR x IS NULL` when the list holds nil.
+                    let given: Vec<&Value> = values.iter().filter(|v| !v.is_nil()).collect();
+                    let cast = |v: &Value| M::behavior().query_value(column, M::cast_query(column, v.clone()));
                     let mut any = Vec::new();
-                    if !cast.is_empty() {
-                        let start = params.len();
-                        params.extend(cast);
-                        let marks: Vec<String> = (start + 1..=params.len()).map(|i| format!("${i}")).collect();
-                        any.push(format!("{target} IN ({})", marks.join(", ")));
+                    if let [one] = given.as_slice() {
+                        match cast(one) {
+                            Value::Nil if M::behavior().enum_for(column).is_some() => any.push(format!("{target} IS NULL")),
+                            Value::Nil => {}
+                            value => {
+                                params.push(value);
+                                any.push(format!("{target} = ${}", params.len()));
+                            }
+                        }
+                    } else {
+                        let cast: Vec<Value> = given.into_iter().map(cast).filter(|v| !v.is_nil()).collect();
+                        if !cast.is_empty() {
+                            let start = params.len();
+                            params.extend(cast);
+                            let marks: Vec<String> = (start + 1..=params.len()).map(|i| format!("${i}")).collect();
+                            any.push(format!("{target} IN ({})", marks.join(", ")));
+                        }
                     }
                     if nils {
                         any.push(format!("{target} IS NULL"));
