@@ -61,3 +61,20 @@ fn test_the_cache_keeps_a_thousand_statements() {
     // what's pushed out is closed on the server too.
     assert_eq!(1000, prepared(&mut ctx));
 }
+
+/// A migration that changes a column's type under a prepared statement
+/// fails that statement once; the cache is dropped, so the query after
+/// prepares again instead of failing until the worker restarts.
+#[test]
+fn test_a_statement_a_migration_invalidated_is_prepared_again() {
+    let mut ctx = support::ctx();
+    ctx.execute("CREATE TEMP TABLE widgets (size integer)", &[]).unwrap();
+    ctx.execute("INSERT INTO widgets VALUES (1)", &[]).unwrap();
+    let sql = "SELECT size FROM widgets";
+    assert!(ctx.query(sql, &[]).is_ok());
+    ctx.execute("ALTER TABLE widgets ALTER COLUMN size TYPE bigint", &[]).unwrap();
+    // The failure aborts the test's transaction, so it runs in a savepoint.
+    let stale = ctx.transaction(|ctx| ctx.query(sql, &[]).map(|_| true));
+    assert!(stale.is_err());
+    assert_eq!(1i64, ctx.query(sql, &[]).unwrap()[0].get::<_, i64>(0));
+}

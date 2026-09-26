@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 
-use postgres::error::Severity;
+use postgres::error::{Severity, SqlState};
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row, Statement};
 
@@ -39,12 +39,18 @@ impl Connection {
         self.broken || self.client.is_closed()
     }
 
-    /// Passes a call's result through, noting an error that ends the connection.
+    /// Passes a call's result through, noting an error that ends the
+    /// connection. "cached plan must not change result type" means a
+    /// migration changed a table under the prepared statements: like Rails'
+    /// statement cache, they're dropped and the next query prepares afresh.
     fn check<T>(&mut self, result: std::result::Result<T, postgres::Error>) -> Result<T> {
-        if let Err(error) = &result
-            && ends_connection(error)
-        {
-            self.broken = true;
+        if let Err(error) = &result {
+            if ends_connection(error) {
+                self.broken = true;
+            } else if error.code() == Some(&SqlState::FEATURE_NOT_SUPPORTED) {
+                self.statements.clear();
+                self.order.clear();
+            }
         }
         Ok(result?)
     }
