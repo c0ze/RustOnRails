@@ -143,12 +143,22 @@ impl Drop for Slot {
     }
 }
 
-/// A connection past `max_connections`: a 503, written without waiting on
-/// the client, and closed.
+/// A connection past `max_connections`: a 503, and closed, all without
+/// waiting on the client. Whatever it already sent is read first, since
+/// closing with it unread makes the kernel reset the connection, which
+/// can destroy the 503 before the client reads it.
 fn busy(mut stream: TcpStream) {
     stream.set_write_timeout(Some(Duration::from_millis(100))).ok();
     wire::write_response(&mut stream, &error_page(503), false, true).ok();
     stream.shutdown(Shutdown::Write).ok();
+    if stream.set_nonblocking(true).is_ok() {
+        let mut sink = [0u8; 4096];
+        for _ in 0..16 {
+            if !matches!(io::Read::read(&mut stream, &mut sink), Ok(n) if n > 0) {
+                break;
+            }
+        }
+    }
 }
 
 /// Reads requests off one connection and writes their responses in order,
@@ -157,9 +167,13 @@ fn busy(mut stream: TcpStream) {
 fn serve(stream: TcpStream, jobs: &Sender<Job>, limits: &Limits) {
     // Each response goes out in one write, and TCP_NODELAY sends it now
     // rather than holding its last segment for the client's delayed ACK.
-    let (Ok(()), Ok(read_half)) = (stream.set_nodelay(true), stream.try_clone()) else { return };
-    let mut reader = BufReader::new(Timed::new(read_half, limits.idle_timeout));
-    let mut writer = Timed::new(stream, limits.write_timeout);
+    if stream.set_nodelay(true).is_err() {
+        return;
+    }
+    // Reads and writes share the one socket (and file descriptor); their
+    // timeouts are separate socket options.
+    let mut reader = BufReader::new(Timed::new(&stream, limits.idle_timeout));
+    let mut writer = Timed::new(&stream, limits.write_timeout);
     loop {
         // Waiting for the next request is idle time; its first byte starts
         // the clock on its headers, and the headers' end on its body.
@@ -169,7 +183,7 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>, limits: &Limits) {
         }
         reader.get_mut().within(Some(limits.header_timeout));
         let request = wire::read_head(&mut reader).and_then(|head| {
-            reader.get_mut().within(Some(limits.body_timeout));
+            reader.get_mut().within_at(limits.body_timeout, limits.min_rate);
             writer.within(Some(limits.body_timeout));
             let body = wire::read_body(&head, &mut reader, &mut writer, limits.max_body_bytes)?;
             Ok((head, body))
@@ -188,7 +202,7 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>, limits: &Limits) {
             return;
         }
         let Ok(response) = response.recv() else { return };
-        writer.within(Some(limits.write_timeout));
+        writer.within_at(limits.write_timeout, limits.min_rate);
         if wire::write_response(&mut writer, &response, head_only, close).is_err() || close {
             return;
         }
@@ -199,7 +213,7 @@ fn serve(stream: TcpStream, jobs: &Sender<Job>, limits: &Limits) {
 /// bytes still unread makes the kernel send a reset, which can destroy the
 /// response before the client reads it, so read and discard for a moment
 /// first.
-fn refuse(reader: &mut BufReader<Timed>, writer: &mut Timed, status: u16, limits: &Limits) {
+fn refuse(reader: &mut BufReader<Timed<'_>>, writer: &mut Timed<'_>, status: u16, limits: &Limits) {
     writer.within(Some(limits.write_timeout));
     if wire::write_response(writer, &error_page(status), false, true).is_err() {
         return;

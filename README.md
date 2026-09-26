@@ -18,8 +18,9 @@ A crate `rutile build` generates is configured from the environment, like a Rail
 | `MAX_CONNECTIONS` | `512` | Connections served at once; past it a new one gets a 503. |
 | `IDLE_TIMEOUT` | `20` | Seconds a kept-alive connection may wait for its next request. |
 | `HEADER_TIMEOUT` | `20` | Seconds from a request's first byte to the end of its headers, then a 408. |
-| `BODY_TIMEOUT` | `60` | Seconds for the whole request body, then a 408. |
-| `WRITE_TIMEOUT` | `60` | Seconds for writing the whole response. |
+| `BODY_TIMEOUT` | `60` | Seconds for a request body, plus one for each `MIN_RATE` bytes that arrive; past that, a 408. |
+| `WRITE_TIMEOUT` | `60` | The same for writing a response. |
+| `MIN_RATE` | `1024` | Bytes a second a body or response must average once its timeout is spent, so a large one can take as long as it needs and a trickle can't. |
 | `MAX_BODY_BYTES` | `10485760` | The largest request body; a bigger one is a 413. |
 
 A program that starts the server itself passes `rustonrails::Limits` in `server::Config`.

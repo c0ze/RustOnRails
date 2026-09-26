@@ -4,7 +4,7 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 
 ## Unreleased
 
-- The server's limits, each configurable (`Limits`, or the environment): a connection cap, deadlines for a request's headers, its body and the response, and the body size. A client trickling bytes can no longer hold a thread forever.
+- The server's limits, each configurable (`Limits`, or the environment): a connection cap, deadlines for a request's headers, its body and the response (the last two growing with the bytes that move, at `MIN_RATE`), and the body size. A client trickling bytes can no longer hold a thread forever, and a slow but steady one isn't cut off. Each connection holds one file descriptor.
 - Postgres over TLS, with every libpq `sslmode` and `sslrootcert`.
 - HTTP: control bytes in the target or a header, `Transfer-Encoding` on HTTP/1.0 and lowercase methods are refused; running out of threads no longer ends the accept loop; a panic outside a transaction keeps the worker's connection.
 - Connections: one ended by a FATAL error is replaced after that request, not the next; statements a migration invalidated are prepared again.

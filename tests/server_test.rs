@@ -177,6 +177,46 @@ fn test_a_request_that_trickles_in_is_cut_off_with_a_408() {
     running.stop();
 }
 
+/// A body that keeps moving at MIN_RATE or faster gets the time it needs:
+/// here 2,000 bytes over a second against a 200 ms BODY_TIMEOUT, at twice
+/// the minimum rate.
+#[test]
+fn test_a_slow_but_steady_upload_is_served() {
+    let limits = Limits { body_timeout: Duration::from_millis(200), min_rate: 1000, ..Limits::default() };
+    let running = start_with(1, limits);
+    let body = format!("{{\"name\":\"{}\"}}", "a".repeat(1989));
+    assert_eq!(2000, body.len());
+    let mut stream = TcpStream::connect(running.address).unwrap();
+    let head = "POST /echo HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 2000\r\nConnection: close\r\n\r\n";
+    stream.write_all(head.as_bytes()).unwrap();
+    for chunk in body.as_bytes().chunks(100) {
+        stream.write_all(chunk).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    assert!(raw.starts_with("HTTP/1.1 201"), "{raw}");
+    running.stop();
+}
+
+/// IDLE_TIMEOUT is the wait between requests; a pause inside one is the
+/// header or body deadline's to judge.
+#[test]
+fn test_a_pause_inside_a_request_is_not_idleness() {
+    let limits = Limits { idle_timeout: Duration::from_millis(100), ..Limits::default() };
+    let running = start_with(1, limits);
+    let mut stream = TcpStream::connect(running.address).unwrap();
+    stream.write_all(b"POST /echo HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 12\r\n").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    stream.write_all(b"Connection: close\r\n\r\n{\"name\":").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    stream.write_all(b"\"A\"}").unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    assert!(raw.starts_with("HTTP/1.1 201"), "{raw}");
+    running.stop();
+}
+
 /// Past max_connections a new connection is a 503, and a slot frees when
 /// its connection ends.
 #[test]
