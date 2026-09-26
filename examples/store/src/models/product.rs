@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use rustonrails::{
     Behavior, Check, Ctx, Error, Handle, HasMany, Model, Number, Numericality, Relation, Result,
-    Time, model,
+    Time, Value, model,
 };
 
 use super::LineItem;
@@ -39,6 +39,30 @@ impl Product {
     }
 
     // app/models/product.rb:20
+    pub fn availability(ctx: &mut Ctx, product: Handle<Product>) -> Result<Value> {
+        if !(ctx[product].active == Some(true)) {
+            return Ok(Value::from("inactive".to_string()));
+        }
+        if ctx[product].stock == Some(0) {
+            return Ok(Value::from("sold out".to_string()));
+        }
+        Ok(Value::from(ctx[product].stock))
+    }
+
+    // app/models/product.rb:29
+    pub fn tag_with(ctx: &mut Ctx, product: Handle<Product>, tag: Value) -> Result<Value> {
+        if tag.is_nil() {
+            Ok(Value::from(ctx[product].name.clone()))
+        } else {
+            Ok(Value::from(format!(
+                "{} ({})",
+                ctx[product].name.clone().unwrap_or_default(),
+                tag.to_s()
+            )))
+        }
+    }
+
+    // app/models/product.rb:34
     pub fn restock_bang(ctx: &mut Ctx, product: Handle<Product>, amount: i64) -> Result<()> {
         let value = ctx[product].stock.ok_or(Error::Nil { what: "+" })? + amount;
         ctx[product].stock = Some(value);

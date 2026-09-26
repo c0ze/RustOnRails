@@ -25,6 +25,11 @@ pub fn routes() -> Router {
                 ProductsController::deactivate_sold_out,
             ),
         )
+        // POST /products/double(.:format) products#double
+        .post(
+            "/products/double(.:format)",
+            action("double", ProductsController::double),
+        )
         // POST /products/:id/restock(.:format) products#restock
         .post(
             "/products/:id/restock(.:format)",
@@ -34,6 +39,11 @@ pub fn routes() -> Router {
         .get(
             "/products/:id/quote(.:format)",
             action("quote", ProductsController::quote),
+        )
+        // GET /products/:id/availability(.:format) products#availability
+        .get(
+            "/products/:id/availability(.:format)",
+            action("availability", ProductsController::availability),
         )
         // GET /products(.:format) products#index
         .get(
