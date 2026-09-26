@@ -228,6 +228,9 @@ fn test_unknown_enum_label_raises_on_write() {
     ctx.assign(post, &[("status".into(), Value::Int(1))]).unwrap();
     ctx.save_bang(post).unwrap();
     assert_eq!(Some("published"), ctx[post].status.as_deref());
+    // A blank string is nil to Rails' enum type, not an unknown label.
+    ctx.assign(post, &[("status".into(), Value::from(" "))]).unwrap();
+    assert_eq!(None, ctx[post].status);
 }
 
 /// A count too big for a bigint is validated as given, then refused at the

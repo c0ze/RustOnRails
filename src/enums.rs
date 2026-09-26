@@ -52,6 +52,8 @@ impl<M> Behavior<M> {
     /// the inclusion check or the write-time error.
     pub(crate) fn cast_assignment(&self, attribute: &str, value: Value) -> Value {
         match (self.enum_for(attribute), &value) {
+            // Rails' enum type casts a blank string to nil.
+            (Some(_), Value::Str(s)) if s.trim().is_empty() => Value::Nil,
             (Some(def), Value::Int(i)) => def
                 .mapping
                 .iter()
