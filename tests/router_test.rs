@@ -63,7 +63,10 @@ fn test_no_route_is_a_404_page() {
 
 #[test]
 fn test_json_bodies_become_params() {
-    let mut req = Request::new(support::ctx(), "PATCH", "/posts/3").with_json(json!({"email": "x"}));
+    let array = Request::new(support::ctx(), "POST", "/posts").with_json(json!(["a", "b"]));
+    // Rails' JSON params parser puts a body that isn't an object under `_json`.
+    assert_eq!(Some(&json!(["a", "b"])), array.params.get("_json"));
+    let mut req = Request::new(array.ctx, "PATCH", "/posts/3").with_json(json!({"email": "x"}));
     assert!(req.is_json());
     let body = router().call(&mut req).body_json();
     assert_eq!(json!({"id": "3", "email": "x"}), body["params"]);

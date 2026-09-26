@@ -55,12 +55,12 @@ impl Request {
     }
 
     /// A JSON body, as a client sending `Content-Type: application/json`
-    /// (Rails' `as: :json`). A body that isn't an object adds no params.
+    /// (Rails' `as: :json`). A body that isn't an object is `params[:_json]`.
     pub fn with_json(mut self, body: Json) -> Self {
         self.content_type = Some("application/json".to_string());
         self.body = match body {
             Json::Object(map) => map,
-            _ => Map::new(),
+            other => Map::from_iter([("_json".to_string(), other)]),
         };
         self.params = Params::new(self.body.clone(), self.query.clone());
         self
