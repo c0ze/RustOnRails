@@ -122,3 +122,15 @@ fn test_same_record_compares_ids_like_active_record() {
     assert!(!ctx.same_record(Some(ann), None));
     assert!(ctx.same_record(None::<Handle<Person>>, None));
 }
+
+/// Rails won't write a destroyed record again: `save` is false and the
+/// row stays gone.
+#[test]
+fn test_saving_a_destroyed_record_is_false() {
+    let mut ctx = support::ctx();
+    let ann = Person::create_bang(&mut ctx, Person { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Person::new_record() }).unwrap();
+    ctx.destroy_bang(ann).unwrap();
+    ctx[ann].name = Some("Back".into());
+    assert!(!ctx.save(ann).unwrap());
+    assert_eq!(0, Person::all().where_eq("name", "Back").count(&mut ctx).unwrap());
+}

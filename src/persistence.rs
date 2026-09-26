@@ -63,6 +63,10 @@ impl Ctx {
             return Ok(false);
         }
         self.run_callbacks(record, Event::BeforeSave)?;
+        // Rails' create_or_update: a destroyed record isn't written again.
+        if self.is_destroyed(record) {
+            return Ok(false);
+        }
         if self.is_new_record(record) {
             self.run_callbacks(record, Event::BeforeCreate)?;
             self.insert(record)?;
