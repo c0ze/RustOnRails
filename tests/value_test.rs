@@ -50,6 +50,18 @@ fn test_time_casting_handles_offsets_and_dates() {
     assert_eq!(Some("2026-09-25 00:00:00".to_string()), parse("2026-09-25"));
     assert_eq!(Some("2026-09-25 12:00:00.123456".to_string()), parse("2026-09-25T12:00:00.123456Z"));
     assert_eq!(None, parse("junk"));
+    assert_eq!(None, parse(" "));
+    // An HTML datetime-local value, the same with a space, and Time#to_s,
+    // each as Rails 8.1 casts them.
+    assert_eq!(Some("2026-09-26 10:00:00".to_string()), parse("2026-09-26T10:00"));
+    assert_eq!(Some("2026-09-26 10:00:00".to_string()), parse("2026-09-26 10:00"));
+    assert_eq!(Some("2026-09-26 10:00:00".to_string()), parse("2026-09-26 10:00:00 UTC"));
+    assert_eq!(Some("2026-09-26 01:00:00".to_string()), parse("2026-09-26T10:00+09:00"));
+    // Date._parse reads these; a format this doesn't know is an error, not
+    // a nil that saves NULL.
+    for unknown in ["Sep 26 2026 10:00", "26/09/2026", "2026-09-26 junk"] {
+        assert!(Time::from_value(Value::from(unknown)).is_err(), "{unknown:?}");
+    }
 }
 
 #[test]

@@ -119,30 +119,51 @@ impl FromValue for Time {
             Value::Time(t) => Ok(Some(t)),
             // Active Model casts a Date to its midnight.
             Value::Date(d) => Ok(Some(d.and_time(chrono::NaiveTime::MIN))),
-            Value::Str(s) => Ok(parse_time(s.trim())),
+            Value::Str(s) => parse_time(&s),
             other => Err(Error::Cast { expected: "datetime", value: other }),
+        }
+    }
+
+    /// As for a date: a string in a format this can't read stays a string,
+    /// so binding it fails rather than matching nothing.
+    fn query(value: Value) -> Value {
+        match Self::from_value(value.clone()) {
+            Ok(time) => time.map_or(Value::Nil, Value::Time),
+            Err(_) if matches!(value, Value::Str(_)) => value,
+            Err(_) => Value::Nil,
         }
     }
 }
 
-/// The datetime strings Rails accepts in practice: ISO 8601 with or without
-/// an offset (converted to UTC), a space instead of `T`, or a bare date
-/// (midnight). Anything else is nil, as in Rails.
-fn parse_time(s: &str) -> Option<Time> {
+/// The datetime strings Rails reads without `Date._parse`: ISO 8601 with
+/// or without seconds and an offset (converted to UTC), a space instead of
+/// `T`, a trailing UTC (Ruby's `Time#to_s`), or a bare date (midnight).
+/// `Date._parse` reads many more formats, so, as for dates, a string with
+/// digits in a format this doesn't know is an error rather than a nil
+/// that would save NULL; without digits it's nil in Rails too.
+fn parse_time(s: &str) -> Result<Option<Time>> {
+    let s = s.trim();
     if let Ok(time) = DateTime::parse_from_rfc3339(s) {
-        return Some(time.naive_utc());
+        return Ok(Some(time.naive_utc()));
     }
-    for format in ["%Y-%m-%d %H:%M:%S%.f %z", "%Y-%m-%d %H:%M:%S%.f%:z"] {
+    for format in ["%Y-%m-%d %H:%M:%S%.f %z", "%Y-%m-%d %H:%M:%S%.f%:z", "%Y-%m-%dT%H:%M%:z", "%Y-%m-%d %H:%M%:z"] {
         if let Ok(time) = DateTime::parse_from_str(s, format) {
-            return Some(time.naive_utc());
+            return Ok(Some(time.naive_utc()));
         }
     }
-    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"] {
-        if let Ok(time) = NaiveDateTime::parse_from_str(s, format) {
-            return Some(time);
+    let naive = s.strip_suffix(" UTC").or_else(|| s.strip_suffix('Z')).unwrap_or(s);
+    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"] {
+        if let Ok(time) = NaiveDateTime::parse_from_str(naive, format) {
+            return Ok(Some(time));
         }
     }
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|date| date.and_hms_opt(0, 0, 0))
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(date.and_hms_opt(0, 0, 0));
+    }
+    if s.chars().any(|c| c.is_ascii_digit()) {
+        return Err(Error::Cast { expected: "datetime", value: Value::Str(s.to_string()) });
+    }
+    Ok(None)
 }
 
 impl FromValue for Date {
