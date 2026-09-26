@@ -162,6 +162,7 @@ impl ProductsController {
         for product_3 in low.clone() {
             mapped_2.push(req.ctx[product_3].stock);
         }
+        let units = sum_integers(0, mapped_2)?;
         let mut mapped_3 = Vec::with_capacity(low.len());
         for product_4 in low.clone() {
             mapped_3.push(
@@ -171,6 +172,7 @@ impl ProductsController {
                     * req.ctx[product_4].stock.ok_or(Error::Nil { what: "*" })?,
             );
         }
+        let value_cents = sum_integers(0, mapped_3)?;
         let mut kept = Vec::new();
         for product_5 in low.clone() {
             if !(req.ctx[product_5].active == Some(true)) {
@@ -183,7 +185,7 @@ impl ProductsController {
         }
         Ok(Response::json(
             status::OK,
-            json!({ "names": Json::from(mapped), "units": sum_integers(0, mapped_2)?, "value_cents": sum_integers(0, mapped_3)?, "inactive": (kept.len() as i64), "price_cents": sum_floats(0.0, mapped_4.into_iter().map(|item| item.map(|item| item as f64)))? }),
+            json!({ "names": Json::from(mapped), "units": units, "value_cents": value_cents, "inactive": (kept.len() as i64), "price_cents": sum_floats(0.0, mapped_4.into_iter().map(|item| item.map(|item| item as f64)))? }),
         ))
     }
 
