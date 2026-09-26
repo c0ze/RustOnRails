@@ -1,6 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 
+use postgres::error::Severity;
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row, Statement};
 
@@ -15,6 +16,8 @@ const STATEMENT_LIMIT: usize = 1000;
 /// rather than on every call.
 pub struct Connection {
     client: Client,
+    /// Set when a call failed in a way that ends the connection.
+    broken: bool,
     statements: HashMap<String, Statement>,
     /// Oldest first; past the limit the oldest is dropped, as Rails does.
     order: VecDeque<String>,
@@ -22,23 +25,36 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(client: Client) -> Self {
-        Self { client, statements: HashMap::new(), order: VecDeque::new() }
+        Self { client, broken: false, statements: HashMap::new(), order: VecDeque::new() }
     }
 
     pub fn connect(url: &str) -> Result<Self> {
         Ok(Self::new(Client::connect(url, NoTls)?))
     }
 
-    /// Whether the database closed it (restart, failover, idle kill).
+    /// Whether the database closed it (restart, failover, idle kill). The
+    /// driver only marks itself closed once it reads the end of the socket,
+    /// which can be a request after the FATAL error that announced it.
     pub fn is_closed(&self) -> bool {
-        self.client.is_closed()
+        self.broken || self.client.is_closed()
+    }
+
+    /// Passes a call's result through, noting an error that ends the connection.
+    fn check<T>(&mut self, result: std::result::Result<T, postgres::Error>) -> Result<T> {
+        if let Err(error) = &result
+            && ends_connection(error)
+        {
+            self.broken = true;
+        }
+        Ok(result?)
     }
 
     fn prepared(&mut self, sql: &str) -> Result<Statement> {
         if let Some(statement) = self.statements.get(sql) {
             return Ok(statement.clone());
         }
-        let statement = self.client.prepare(sql)?;
+        let prepared = self.client.prepare(sql);
+        let statement = self.check(prepared)?;
         if self.order.len() == STATEMENT_LIMIT {
             let oldest = self.order.pop_front().expect("the limit isn't zero");
             self.statements.remove(&oldest);
@@ -94,19 +110,22 @@ impl Ctx {
     /// Runs `sql` as a statement prepared once on this connection.
     pub fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Row>> {
         let statement = self.connection.prepared(sql)?;
-        Ok(self.connection.client.query(&statement, &refs(params))?)
+        let rows = self.connection.client.query(&statement, &refs(params));
+        self.connection.check(rows)
     }
 
     pub fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64> {
         let statement = self.connection.prepared(sql)?;
-        Ok(self.connection.client.execute(&statement, &refs(params))?)
+        let count = self.connection.client.execute(&statement, &refs(params));
+        self.connection.check(count)
     }
 
     /// Runs `sql` without keeping its statement: SQL with values written
     /// into it (a `where` fragment's binds), which Rails doesn't prepare
     /// either, since each value would be a statement of its own.
     pub(crate) fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Row>> {
-        Ok(self.connection.client.query(sql, &refs(params))?)
+        let rows = self.connection.client.query(sql, &refs(params));
+        self.connection.check(rows)
     }
 
     /// `transaction do ... end`, keeping the block's outcome the way `save`
@@ -118,26 +137,39 @@ impl Ctx {
         } else {
             (format!("SAVEPOINT {name}"), format!("RELEASE SAVEPOINT {name}"), format!("ROLLBACK TO SAVEPOINT {name}"))
         };
-        self.connection.client.batch_execute(&begin)?;
+        self.batch_execute(&begin)?;
         self.depth += 1;
         let outcome = block(self);
         self.depth -= 1;
         match outcome {
             Ok(true) => {
-                self.connection.client.batch_execute(&commit)?;
+                self.batch_execute(&commit)?;
                 Ok(true)
             }
             Ok(false) => {
-                self.connection.client.batch_execute(&rollback)?;
+                self.batch_execute(&rollback)?;
                 Ok(false)
             }
             Err(error) => {
                 // The original error says more than a failed rollback would.
-                self.connection.client.batch_execute(&rollback).ok();
+                self.batch_execute(&rollback).ok();
                 Err(error)
             }
         }
     }
+
+    fn batch_execute(&mut self, sql: &str) -> Result<()> {
+        let done = self.connection.client.batch_execute(sql);
+        self.connection.check(done)
+    }
+}
+
+/// A FATAL or PANIC from the server (it's terminating this backend), a
+/// socket error, or a driver that has already seen the connection close.
+fn ends_connection(error: &postgres::Error) -> bool {
+    error.is_closed()
+        || error.as_db_error().is_some_and(|e| matches!(e.parsed_severity(), Some(Severity::Fatal | Severity::Panic)))
+        || std::error::Error::source(error).is_some_and(|e| e.is::<std::io::Error>())
 }
 
 fn refs(params: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
