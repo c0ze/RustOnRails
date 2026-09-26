@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::Response;
+use super::{Request, Response};
 use crate::{Error, Result, Value};
 
 /// A render in progress: the output buffer, the template's output once
@@ -66,6 +66,23 @@ impl View {
         }
     }
 
+    /// Whether the request takes the HTML template; if not, what Rails
+    /// raises. An action rendering its own template (`implicit`, its name)
+    /// can't answer the format, a 406; an explicit render finds no
+    /// template for it, a 500.
+    pub fn negotiate(req: &Request, controller: &str, template: &str, implicit: Option<&str>) -> Result<()> {
+        if req.accepts_html() {
+            return Ok(());
+        }
+        Err(match implicit {
+            Some(action) => Error::Raised {
+                class: "ActionController::UnknownFormat",
+                message: format!("{controller}#{action} is missing a template for this request format and variant."),
+            },
+            None => Error::Raised { class: "ActionView::MissingTemplate", message: format!("Missing template {template} for this request format.") },
+        })
+    }
+
     /// The page, with Rails' HTML content type.
     pub fn response(self, status: u16) -> Response {
         Response::html(status, self.out)
@@ -89,12 +106,13 @@ pub fn html_escape(text: &str) -> String {
 }
 
 /// `link_to name, href, class: ...`: the attributes as given, then href,
-/// as Action View writes them. `name` is HTML already.
-pub fn link_to(name: &str, href: &str, attributes: &[(&str, &str)]) -> String {
+/// as Action View writes them. `name` is HTML already; nil shows the href.
+pub fn link_to(name: Option<&str>, href: &str, attributes: &[(&str, &str)]) -> String {
     let mut tag = String::from("<a");
     for (key, value) in attributes.iter().chain([&("href", href)]) {
         tag.push_str(&format!(" {key}=\"{}\"", html_escape(value)));
     }
+    let name = name.map_or_else(|| html_escape(href), str::to_string);
     format!("{tag}>{name}</a>")
 }
 
@@ -143,7 +161,8 @@ impl ToParam for Value {
 /// A path segment for `value`, escaped as Journey escapes one; a missing
 /// value is Rails' UrlGenerationError for the route.
 pub fn path_segment(value: impl ToParam, controller: &str, action: &str, key: &str) -> Result<String> {
-    let Some(param) = value.to_param() else {
+    // nil, or "" (which no route segment matches), is a missing key.
+    let Some(param) = value.to_param().filter(|param| !param.is_empty()) else {
         let message = format!(
             "No route matches {{action: \"{action}\", controller: \"{controller}\", {key}: nil}}, missing required keys: [:{key}]"
         );

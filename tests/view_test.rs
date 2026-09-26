@@ -51,10 +51,11 @@ fn test_content_for_reads() {
 /// The attributes as given, href last, each escaped.
 #[test]
 fn test_link_to() {
-    assert_eq!("<a href=\"/shop\">Shop</a>", link_to("Shop", "/shop", &[]));
+    assert_eq!("<a href=\"/shop\">Shop</a>", link_to(Some("Shop"), "/shop", &[]));
+    assert_eq!("<a href=\"/q?a&amp;b\">/q?a&amp;b</a>", link_to(None, "/q?a&b", &[]));
     assert_eq!(
         "<a class=\"a &quot;b&quot;\" title=\"x&amp;y\" href=\"/q?a=1&amp;b=2\">&lt;i&gt;</a>",
-        link_to("&lt;i&gt;", "/q?a=1&b=2", &[("class", "a \"b\""), ("title", "x&y")])
+        link_to(Some("&lt;i&gt;"), "/q?a=1&b=2", &[("class", "a \"b\""), ("title", "x&y")])
     );
 }
 
@@ -77,4 +78,5 @@ fn test_path_segments() {
         other => panic!("{other:?}"),
     }
     assert!(path_segment(Value::Nil, "p", "s", "id").is_err());
+    assert!(path_segment("", "p", "s", "id").is_err());
 }

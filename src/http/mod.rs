@@ -14,7 +14,7 @@ mod view;
 mod wire;
 
 pub use controller::{Action, Controller, action, error_response};
-pub use cookies::Cookies;
+pub use cookies::{CookieOptions, Cookies};
 pub use encryptor::CookieKey;
 pub use session::{Session, SessionStore};
 pub use health::health;

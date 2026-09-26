@@ -69,8 +69,16 @@ pub fn start(router: Router, config: Config) -> Result<Running, BoxError> {
     let address = listener.local_addr()?;
     let (jobs, queue) = channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));
-    let router = Arc::new(router.secret_key_base(config.secret_key_base.as_deref()));
-    crate::jobs::configure(config.redis_url.as_deref());
+    let router = router.secret_key_base(config.secret_key_base.as_deref());
+    // Rails won't boot without the secret its session cookie needs.
+    if router.needs_secret() {
+        return Err("SECRET_KEY_BASE is not set, and the app's session cookie needs it".into());
+    }
+    let router = Arc::new(router);
+    // Only an app with jobs names its Redis.
+    if let Some(url) = &config.redis_url {
+        crate::jobs::configure(Some(url))?;
+    }
     let workers = (0..config.workers.max(1))
         .map(|_| {
             let (queue, router, url) = (queue.clone(), router.clone(), config.database_url.clone());

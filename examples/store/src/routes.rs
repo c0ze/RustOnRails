@@ -10,6 +10,13 @@ use crate::controllers::{
 pub fn routes() -> Router {
     Router::new()
         .session_store("_store_session")
+        .default_headers(&[
+            ("X-Frame-Options", "SAMEORIGIN"),
+            ("X-XSS-Protection", "0"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Permitted-Cross-Domain-Policies", "none"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
+        ])
         // GET /products/stats(.:format) products#stats
         .get(
             "/products/stats(.:format)",

@@ -35,7 +35,7 @@ pub use behavior::{Behavior, Check, Cond, Event, Hook, Normalizer};
 pub use cast::FromValue;
 pub use ctx::{Connection, Ctx};
 pub use error::{Error, RecordInvalid, Result};
-pub use http::{Action, Constraint, Controller, CookieKey, Cookies, Handler, Params, Request, Response, Router, Session, SessionStore, ToParam, View, action, error_page, error_response, health, html_escape, link_to, parse_query, path_segment, reason, status};
+pub use http::{Action, Constraint, Controller, CookieKey, CookieOptions, Cookies, Handler, Params, Request, Response, Router, Session, SessionStore, ToParam, View, action, error_page, error_response, health, html_escape, link_to, parse_query, path_segment, reason, status};
 pub use http::server;
 pub use json::{AsJson, errors_json, format_date, format_time, merge, value_json};
 pub use records::Handle;

@@ -35,7 +35,7 @@ impl StorefrontController {
     // app/controllers/storefront_controller.rb:6
     pub fn index(&mut self, req: &mut Request) -> Result<Response> {
         self.products = Some(Product::all().available().order_asc("name"));
-        self.render_storefront_index(req, 200)
+        self.render_storefront_index(req, 200, Some("index"))
     }
 
     // app/controllers/storefront_controller.rb:10
@@ -50,7 +50,7 @@ impl StorefrontController {
                 .order_asc("name")
                 .limit(2),
         );
-        self.render_storefront_show(req, 200)
+        self.render_storefront_show(req, 200, Some("show"))
     }
 
     // app/controllers/storefront_controller.rb:16
@@ -59,7 +59,13 @@ impl StorefrontController {
         Ok(())
     }
 
-    fn render_storefront_index(&mut self, req: &mut Request, status: u16) -> Result<Response> {
+    fn render_storefront_index(
+        &mut self,
+        req: &mut Request,
+        status: u16,
+        implicit: Option<&str>,
+    ) -> Result<Response> {
+        View::negotiate(req, "StorefrontController", "storefront/index", implicit)?;
         let mut view = View::default();
         self.view_storefront_index(req, &mut view)?;
         view.lay_out();
@@ -67,7 +73,13 @@ impl StorefrontController {
         Ok(view.response(status))
     }
 
-    fn render_storefront_show(&mut self, req: &mut Request, status: u16) -> Result<Response> {
+    fn render_storefront_show(
+        &mut self,
+        req: &mut Request,
+        status: u16,
+        implicit: Option<&str>,
+    ) -> Result<Response> {
+        View::negotiate(req, "StorefrontController", "storefront/show", implicit)?;
         let mut view = View::default();
         self.view_storefront_show(req, &mut view)?;
         view.lay_out();
@@ -94,7 +106,12 @@ impl StorefrontController {
             for product in records {
                 view.text("    <li>");
                 view.raw(&link_to(
-                    &html_escape(req.ctx[product].name.clone().as_deref().unwrap_or_default()),
+                    req.ctx[product]
+                        .name
+                        .clone()
+                        .as_deref()
+                        .map(html_escape)
+                        .as_deref(),
                     &crate::routes::shop_product_path(req.ctx[product].id)?,
                     &[],
                 ));
@@ -175,7 +192,12 @@ impl StorefrontController {
             for other in records {
                 view.text("    ");
                 view.raw(&link_to(
-                    &html_escape(req.ctx[other].name.clone().as_deref().unwrap_or_default()),
+                    req.ctx[other]
+                        .name
+                        .clone()
+                        .as_deref()
+                        .map(html_escape)
+                        .as_deref(),
                     &crate::routes::shop_product_path(req.ctx[other].id)?,
                     &[("class", "related")],
                 ));
@@ -194,7 +216,11 @@ impl StorefrontController {
                 .unwrap_or_else(|| "The Store".to_string()),
         );
         view.text("</title>\n  </head>\n  <body>\n    <header>");
-        view.raw(&link_to(&"The Store", &crate::routes::shop_path()?, &[]));
+        view.raw(&link_to(
+            Some(&"The Store"),
+            &crate::routes::shop_path()?,
+            &[],
+        ));
         view.text("</header>\n    <main>\n");
         view.append_content();
         view.text("\n    </main>\n    <footer>Prices in cents — stock as of this page</footer>\n  </body>\n</html>\n");

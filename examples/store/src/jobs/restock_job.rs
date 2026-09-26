@@ -20,6 +20,7 @@ pub fn run(ctx: &mut Ctx, product: Handle<Product>, amount: i64) -> Result<()> {
 
 /// What a worker runs, with the arguments Active Job serialized.
 pub fn perform(ctx: &mut Ctx, arguments: &[Json]) -> Result<()> {
+    jobs::arity(arguments, 2)?;
     let product = jobs::record_at::<Product>(ctx, arguments, 0)?;
     let amount = jobs::scalar_at::<i64>(arguments, 1)?;
     run(ctx, product, amount)

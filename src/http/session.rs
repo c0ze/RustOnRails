@@ -7,15 +7,21 @@
 
 use serde_json::{Map, Value as Json};
 
+use super::cookies::CookieOptions;
 use super::encryptor::CookieKey;
 use crate::json::{format_date, format_time, value_json};
 use crate::{Error, Result, Value};
 
-/// The cookie store's settings: the cookie's name and the key for it.
+/// `ActionDispatch::Cookies::MAX_COOKIE_SIZE`
+const MAX_COOKIE_SIZE: usize = 4096;
+
+/// The cookie store's settings: the cookie's name, the key for it, and
+/// its attributes.
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     pub name: &'static str,
     pub key: Option<CookieKey>,
+    pub options: CookieOptions,
 }
 
 #[derive(Debug, Default)]
@@ -83,7 +89,12 @@ impl Session {
         let store = self.store()?;
         let kept: Map<String, Json> = data.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
         let value = key(store)?.encrypt(store.name, Json::Object(kept).to_string().as_bytes());
-        Ok(Some(format!("{}={}; path=/; httponly; samesite=lax", store.name, super::cookies::escape(&value))))
+        // Rails' encrypted jar refuses what a browser would drop.
+        if value.len() > MAX_COOKIE_SIZE {
+            let message = format!("{} cookie overflowed with size {} bytes", store.name, value.len());
+            return Err(Error::Raised { class: "ActionDispatch::Cookies::CookieOverflow", message });
+        }
+        Ok(Some(format!("{}={}{}", store.name, super::cookies::escape(&value), store.options.attributes())))
     }
 
     fn store(&self) -> Result<&SessionStore> {

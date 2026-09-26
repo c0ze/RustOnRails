@@ -29,7 +29,7 @@ fn redis_url() -> String {
 
 /// The test Redis, with `queues` emptied.
 fn redis(queues: &[&str]) -> Redis {
-    jobs::configure(Some(&redis_url()));
+    jobs::configure(Some(&redis_url())).unwrap();
     let mut redis = Redis::connect(&redis_url()).expect("the test Redis (rake redis:start in Rutile) is up");
     for queue in queues {
         redis.command(&["DEL", &format!("queue:{queue}")]).unwrap();
@@ -156,6 +156,7 @@ fn perform(_ctx: &mut Ctx, class: &str, arguments: &[Json]) -> Result<bool> {
             Ok(true)
         }
         "Failing" => Err(Error::Argument { message: "wrong number of arguments (given 0, expected 1)".into() }),
+        "Panicking" => panic!("attempt to add with overflow"),
         _ => Ok(false),
     }
 }
@@ -244,4 +245,112 @@ fn test_retries_come_due_and_die() {
     redis.command(&["LPUSH", "queue:dying", "{not json"]).unwrap();
     assert!(matches!(work_once("dying"), Err(Error::Raised { class: "JSON::ParserError", .. })));
     assert_eq!(Reply::Int(1), redis.command(&["ZREM", "dead", "{not json"]).unwrap());
+}
+
+/// A payload as Sidekiq keeps it, for `class` on `queue`.
+fn payload(class: &str, queue: &str, extra: Json) -> Json {
+    let mut job = json!({ "retry": true, "queue": queue, "class": "Sidekiq::ActiveJob::Wrapper", "jid": format!("{class}-{queue}"),
+                          "args": [{ "job_class": class, "arguments": [queue] }] });
+    job.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    job
+}
+
+/// Every entry of the sorted set `set` for `queue`, removed.
+fn take(redis: &mut Redis, set: &str, queue: &str) -> Vec<Json> {
+    let Reply::Array(entries) = redis.command(&["ZRANGE", set, "0", "-1"]).unwrap() else { panic!() };
+    let mut found = Vec::new();
+    for entry in entries {
+        let Reply::Bulk(bytes) = entry else { panic!() };
+        let Ok(job) = serde_json::from_slice::<Json>(&bytes) else { continue };
+        if job["queue"] == queue || job["retry_queue"] == queue || job["args"][0]["arguments"][0] == queue {
+            redis.command_bytes(&[b"ZREM", set.as_bytes(), &bytes]).unwrap();
+            found.push(job);
+        }
+    }
+    found
+}
+
+/// A job that panics fails like one that raised: onto the retry set,
+/// and the worker lives on.
+#[test]
+fn test_a_panic_is_a_failure() {
+    let mut redis = redis(&["panicking"]);
+    redis.command(&["LPUSH", "queue:panicking", &payload("Panicking", "panicking", json!({})).to_string()]).unwrap();
+    match work_once("panicking") {
+        Err(Error::Raised { class: "RangeError", message }) => assert_eq!("attempt to add with overflow", message),
+        other => panic!("{other:?}"),
+    }
+    let retried = take(&mut redis, "retry", "panicking");
+    assert_eq!(1, retried.len());
+    assert_eq!("RangeError", retried[0]["error_class"]);
+}
+
+/// Sidekiq's retry option: false drops the job, a number is its limit,
+/// and `dead: false` keeps it off the dead set; `retry_queue` is where
+/// its retries go.
+#[test]
+fn test_sidekiqs_retry_options() {
+    let mut redis = redis(&["dropped", "limited", "undying", "requeued"]);
+    let jobs = [
+        ("dropped", json!({ "retry": false })),
+        ("limited", json!({ "retry": 2, "retry_count": 1 })),
+        ("undying", json!({ "retry": 0, "dead": false })),
+        ("requeued", json!({ "retry_queue": "later" })),
+    ];
+    for (queue, extra) in &jobs {
+        redis.command(&["LPUSH", &format!("queue:{queue}"), &payload("Failing", queue, extra.clone()).to_string()]).unwrap();
+        assert!(work_once(queue).is_err());
+    }
+    let mut sets = |queue: &str| (take(&mut redis, "retry", queue), take(&mut redis, "dead", queue));
+    let (retried, dead) = sets("dropped");
+    assert_eq!((0, 0), (retried.len(), dead.len()));
+    let (retried, dead) = sets("limited");
+    assert_eq!((0, 1), (retried.len(), dead.len()));
+    assert_eq!(json!(2), dead[0]["retry_count"]);
+    let (retried, dead) = sets("undying");
+    assert_eq!((0, 0), (retried.len(), dead.len()));
+    let (retried, _) = sets("requeued");
+    assert_eq!(1, retried.len());
+    assert_eq!("later", retried[0]["queue"]);
+    redis.command(&["DEL", "queue:later"]).unwrap();
+}
+
+/// Jobs Rails schedules (`set(wait:)`) run when they're due.
+#[test]
+fn test_scheduled_jobs_run_when_due() {
+    let mut redis = redis(&["scheduled"]);
+    let past = (chrono::Utc::now().timestamp() - 1).to_string();
+    redis.command(&["ZADD", "schedule", &past, &payload("Recorder", "scheduled", json!({})).to_string()]).unwrap();
+    work_once("scheduled").unwrap();
+    assert!(ran("scheduled"));
+}
+
+/// A member that isn't UTF-8 moves like any other: nothing spins on it.
+#[test]
+fn test_members_move_byte_for_byte() {
+    let mut redis = redis(&["bytes"]);
+    let past = (chrono::Utc::now().timestamp() - 1).to_string();
+    let member: &[u8] = b"\xff{not a job}";
+    redis.command_bytes(&[b"ZADD", b"retry", past.as_bytes(), member]).unwrap();
+    // It has no queue, so it lands on the default one.
+    let _ = work_once("bytes");
+    assert_eq!(Reply::Int(1), redis.command_bytes(&[b"LREM", b"queue:default", b"0", member]).unwrap());
+}
+
+#[test]
+fn test_float_and_arity_checks() {
+    assert_eq!(json!(2.5), jobs::float_argument(2.5).unwrap());
+    assert_eq!(Json::Null, jobs::float_argument(None).unwrap());
+    match jobs::float_argument(f64::NAN) {
+        Err(Error::Raised { class: "JSON::GeneratorError", message }) => assert_eq!("NaN not allowed in JSON", message),
+        other => panic!("{other:?}"),
+    }
+    assert!(jobs::arity(&[json!(1)], 1).is_ok());
+    assert_eq!("wrong number of arguments (given 2, expected 1)", jobs::arity(&[json!(1), json!(2)], 1).unwrap_err().to_string());
+}
+
+#[test]
+fn test_only_redis_urls() {
+    let error = jobs::configure(Some("rediss://example.com:6380")).unwrap_err();
+    assert_eq!("REDIS_URL: rediss:// isn't supported, only redis://", error.to_string());
 }

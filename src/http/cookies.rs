@@ -11,13 +11,14 @@ pub struct Cookies {
 }
 
 impl Cookies {
-    /// Rack's parsing: `a=1; b=2`, each part URL-unescaped, the first of a
-    /// repeated name winning.
+    /// Rack's parsing: `a=1; b=2`, each value URL-unescaped (names are
+    /// taken as they are, as Rack 3.2 takes them), the first of a repeated
+    /// name winning.
     pub fn parse(header: Option<&str>) -> Self {
         let mut incoming: Vec<(String, String)> = Vec::new();
         for part in header.unwrap_or("").split(';').map(str::trim).filter(|part| !part.is_empty()) {
             let (name, value) = part.split_once('=').unwrap_or((part, ""));
-            let (name, value) = (unescape(name), unescape(value));
+            let (name, value) = (name.to_string(), unescape(value));
             if !incoming.iter().any(|(n, _)| *n == name) {
                 incoming.push((name, value));
             }
@@ -41,10 +42,42 @@ impl Cookies {
         self.set.push((name.to_string(), value));
     }
 
-    /// The `Set-Cookie` headers, in the order the cookies were set:
-    /// `path=/` and `samesite=lax`, Rails 8.1's defaults.
-    pub fn headers(&self) -> Vec<String> {
-        self.set.iter().map(|(name, value)| format!("{}={}; path=/; samesite=lax", escape(name), escape(value))).collect()
+    /// The `Set-Cookie` headers, in the order the cookies were set, with
+    /// `path=/` and the app's `cookies_same_site_protection`.
+    pub fn headers(&self, same_site: Option<&str>) -> Vec<String> {
+        let options = CookieOptions { path: "/", secure: false, httponly: false, same_site: same_site.map(|s| s.to_string()) };
+        self.set.iter().map(|(name, value)| format!("{}={}{}", escape(name), escape(value), options.attributes())).collect()
+    }
+}
+
+/// A cookie's attributes, written in Rack's order.
+#[derive(Clone, Debug)]
+pub struct CookieOptions {
+    pub path: &'static str,
+    pub secure: bool,
+    pub httponly: bool,
+    /// `lax`, `strict` or `none`; nil leaves it out.
+    pub same_site: Option<String>,
+}
+
+impl CookieOptions {
+    /// The session cookie's, as Rails 8.1 sets it by default.
+    pub fn session() -> Self {
+        Self { path: "/", secure: false, httponly: true, same_site: Some("lax".into()) }
+    }
+
+    pub fn attributes(&self) -> String {
+        let mut out = format!("; path={}", self.path);
+        if self.secure {
+            out.push_str("; secure");
+        }
+        if self.httponly {
+            out.push_str("; httponly");
+        }
+        if let Some(same_site) = &self.same_site {
+            out.push_str(&format!("; samesite={same_site}"));
+        }
+        out
     }
 }
 

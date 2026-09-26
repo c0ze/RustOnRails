@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .and_then(|w| w.parse().ok())
             .unwrap_or(5),
         secret_key_base: std::env::var("SECRET_KEY_BASE").ok(),
-        redis_url: std::env::var("REDIS_URL").ok(),
+        redis_url: Some(
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379/0".into()),
+        ),
     };
     let running = server::start(store::routes::routes(), config)?;
     eprintln!("store listening on {}", running.address);

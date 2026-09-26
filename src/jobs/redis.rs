@@ -1,10 +1,15 @@
 //! Just enough of Redis's protocol (RESP) for Sidekiq's queues: commands
-//! out as arrays of bulk strings, replies read back.
+//! out as arrays of bulk strings, replies read back. Timeouts are
+//! redis-client's (Sidekiq's client): a second to connect, read or write,
+//! plus however long a blocking command blocks.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use crate::{Error, Result};
+
+const TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, PartialEq)]
 pub enum Reply {
@@ -17,6 +22,8 @@ pub enum Reply {
 
 pub struct Redis {
     stream: BufReader<TcpStream>,
+    /// The connection failed mid-command: what's on it can't be trusted.
+    broken: bool,
 }
 
 impl Redis {
@@ -30,8 +37,8 @@ impl Redis {
         };
         let (address, db) = rest.split_once('/').unwrap_or((rest, ""));
         let address = if address.contains(':') { address.to_string() } else { format!("{address}:6379") };
-        let stream = TcpStream::connect(&address).map_err(|e| failed(format!("connecting to Redis at {address}: {e}")))?;
-        let mut redis = Self { stream: BufReader::new(stream) };
+        let stream = open(&address)?;
+        let mut redis = Self { stream: BufReader::new(stream), broken: false };
         let (user, password) = auth.map_or(("", ""), |auth| auth.split_once(':').unwrap_or(("", auth)));
         let (user, password) = (decode(user), decode(password));
         match (user.as_str(), password.as_str()) {
@@ -49,47 +56,96 @@ impl Redis {
         Ok(redis)
     }
 
+    /// Whether the connection failed, rather than Redis answering an error.
+    pub fn is_broken(&self) -> bool {
+        self.broken
+    }
+
     pub fn command(&mut self, args: &[&str]) -> Result<Reply> {
+        let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+        self.command_bytes(&args)
+    }
+
+    /// A command whose arguments may not be UTF-8, such as a member read
+    /// back from a sorted set.
+    pub fn command_bytes(&mut self, args: &[&[u8]]) -> Result<Reply> {
+        self.send(args, TIMEOUT)
+    }
+
+    /// `BRPOP keys... timeout`: waits up to `timeout` seconds for a job.
+    pub fn brpop(&mut self, keys: &[String], timeout: u64) -> Result<Reply> {
+        let seconds = timeout.to_string();
+        let args: Vec<&[u8]> = std::iter::once(b"BRPOP".as_slice())
+            .chain(keys.iter().map(|key| key.as_bytes()))
+            .chain(std::iter::once(seconds.as_bytes()))
+            .collect();
+        self.send(&args, TIMEOUT + Duration::from_secs(timeout))
+    }
+
+    fn send(&mut self, args: &[&[u8]], read_timeout: Duration) -> Result<Reply> {
         let mut out = format!("*{}\r\n", args.len()).into_bytes();
         for arg in args {
             out.extend_from_slice(format!("${}\r\n", arg.len()).as_bytes());
-            out.extend_from_slice(arg.as_bytes());
+            out.extend_from_slice(arg);
             out.extend_from_slice(b"\r\n");
         }
         let stream = self.stream.get_mut();
-        stream.write_all(&out).and_then(|()| stream.flush()).map_err(|e| failed(format!("writing to Redis: {e}")))?;
+        let written = stream.set_read_timeout(Some(read_timeout)).and_then(|()| stream.write_all(&out)).and_then(|()| stream.flush());
+        if let Err(e) = written {
+            return Err(self.lost(format!("writing to Redis: {e}")));
+        }
         self.reply()
     }
 
     fn reply(&mut self) -> Result<Reply> {
         let mut line = String::new();
-        if self.stream.read_line(&mut line).map_err(|e| failed(format!("reading from Redis: {e}")))? == 0 {
-            return Err(failed("Redis closed the connection".into()));
+        match self.stream.read_line(&mut line) {
+            Ok(0) => return Err(self.lost("Redis closed the connection".into())),
+            Ok(_) => {}
+            Err(e) => return Err(self.lost(format!("reading from Redis: {e}"))),
         }
-        let line = line.trim_end_matches("\r\n");
+        let line = line.trim_end_matches("\r\n").to_string();
         let (kind, rest) = line.split_at(line.len().min(1));
-        let number = || rest.parse::<i64>().map_err(|_| failed(format!("a Redis reply I can't read: {line}")));
-        match kind {
-            "+" => Ok(Reply::Status(rest.to_string())),
-            "-" => Err(failed(format!("Redis: {rest}"))),
-            ":" => Ok(Reply::Int(number()?)),
-            "$" => match number()? {
-                -1 => Ok(Reply::Nil),
-                length if length < 0 => Err(failed(format!("a Redis reply I can't read: {line}"))),
-                length => {
-                    let mut bytes = vec![0; length as usize + 2];
-                    self.stream.read_exact(&mut bytes).map_err(|e| failed(format!("reading from Redis: {e}")))?;
-                    bytes.truncate(length as usize);
-                    Ok(Reply::Bulk(bytes))
+        let number = rest.parse::<i64>().ok();
+        let unreadable = |redis: &mut Self| redis.lost(format!("a Redis reply I can't read: {line}"));
+        match (kind, number) {
+            ("+", _) => Ok(Reply::Status(rest.to_string())),
+            ("-", _) => Err(failed(format!("Redis: {rest}"))),
+            (":", Some(n)) => Ok(Reply::Int(n)),
+            ("$" | "*", Some(-1)) => Ok(Reply::Nil),
+            ("$", Some(length)) if length >= 0 => {
+                let mut bytes = vec![0; length as usize + 2];
+                if let Err(e) = self.stream.read_exact(&mut bytes) {
+                    return Err(self.lost(format!("reading from Redis: {e}")));
                 }
-            },
-            "*" => match number()? {
-                -1 => Ok(Reply::Nil),
-                count => (0..count).map(|_| self.reply()).collect::<Result<Vec<_>>>().map(Reply::Array),
-            },
-            _ => Err(failed(format!("a Redis reply I can't read: {line}"))),
+                bytes.truncate(length as usize);
+                Ok(Reply::Bulk(bytes))
+            }
+            ("*", Some(count)) if count >= 0 => (0..count).map(|_| self.reply()).collect::<Result<Vec<_>>>().map(Reply::Array),
+            _ => Err(unreadable(self)),
         }
     }
+
+    fn lost(&mut self, message: String) -> Error {
+        self.broken = true;
+        failed(message)
+    }
+}
+
+/// A connection to `address`, given up on after the connect timeout.
+fn open(address: &str) -> Result<TcpStream> {
+    let refused = |e: std::io::Error| failed(format!("connecting to Redis at {address}: {e}"));
+    let mut last = None;
+    for addr in address.to_socket_addrs().map_err(refused)? {
+        match TcpStream::connect_timeout(&addr, TIMEOUT) {
+            Ok(stream) => {
+                stream.set_write_timeout(Some(TIMEOUT)).map_err(refused)?;
+                return Ok(stream);
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(refused(last.unwrap_or_else(|| std::io::Error::other("no address"))))
 }
 
 /// A URL's `%XX` escapes, as in a password.

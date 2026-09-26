@@ -20,6 +20,20 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
   - `html_escape`, `link_to` and `Response::html`.
   - `path_segment` and `ToParam` serve route helpers: each segment is escaped as Journey escapes it, and a nil id gives Rails' `UrlGenerationError`.
 - `Value::inspect`; `find`'s `RecordNotFound` message quotes a String id, as Rails' does.
+- **Rails' middleware, from the branch's review:**
+  - `Router::default_headers`.
+  - `Router::public_page`: error pages follow the request's format (`Request::accepts_html`, `wants_json_errors`, `negotiated`).
+  - `Vary: Accept`.
+  - `Router::force_ssl`: HSTS and secure cookies.
+  - `CookieOptions` for the session store, and `Router::cookies_same_site`.
+  - CookieOverflow.
+  - The server refuses to start without the secret a session store needs.
+  - `Response::headers`, and Rack's full reason-phrase table.
+- **Worker, from the branch's review:**
+  - It catches panics and reopens a closed database connection.
+  - Redis gets timeouts and one reconnect.
+  - Sidekiq's `retry`, `dead` and `retry_queue`, the dead set's limits, and the `schedule` set.
+  - `jobs::float_argument`, `jobs::arity`; `jobs::configure` checks the URL.
 
 ## 0.9.0
 

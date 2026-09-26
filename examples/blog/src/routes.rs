@@ -7,6 +7,13 @@ use crate::controllers::{CommentsController, PostsController, UsersController};
 /// config/routes.rb, in the order Rails matches it.
 pub fn routes() -> Router {
     Router::new()
+        .default_headers(&[
+            ("X-Frame-Options", "SAMEORIGIN"),
+            ("X-XSS-Protection", "0"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Permitted-Cross-Domain-Policies", "none"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
+        ])
         // GET /users/lookup(.:format) users#lookup
         .get(
             "/users/lookup(.:format)",

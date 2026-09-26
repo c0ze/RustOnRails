@@ -146,6 +146,9 @@ pub fn write_response(writer: &mut impl Write, response: &Response, head_only: b
     if let Some(content_type) = response.content_type {
         out.extend_from_slice(format!("Content-Type: {content_type}\r\n").as_bytes());
     }
+    for (name, value) in &response.headers {
+        out.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+    }
     for cookie in &response.cookies {
         out.extend_from_slice(format!("Set-Cookie: {cookie}\r\n").as_bytes());
     }

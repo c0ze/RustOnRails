@@ -59,6 +59,7 @@ pub fn error_response(error: &Error) -> Response {
         Error::RecordNotFound { .. } => 404,
         Error::RecordInvalid { .. } | Error::RecordNotSaved { .. } => 422,
         Error::ParameterMissing { .. } => 400,
+        Error::Raised { class: "ActionController::UnknownFormat", .. } => 406,
         _ => 500,
     };
     error_page(status)
