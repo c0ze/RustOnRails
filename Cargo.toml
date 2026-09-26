@@ -18,4 +18,4 @@ serde_json = { version = "1", features = ["preserve_order"] }
 overflow-checks = true
 
 [workspace]
-members = ["examples/blog", "examples/tracker", "tools/loadgen"]
+members = ["examples/blog", "examples/store", "examples/tracker", "tools/loadgen"]
