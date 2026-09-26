@@ -31,11 +31,6 @@ static LEADING_INTEGER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[+-]
 static LEADING_FLOAT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?").expect("regex"));
 
-/// Ruby's `String#to_i`: the leading integer, 0 when there is none.
-fn to_i(s: &str) -> i64 {
-    LEADING_INTEGER.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0)
-}
-
 /// Ruby's `String#to_f`: the leading number, 0.0 when there is none.
 fn to_f(s: &str) -> f64 {
     LEADING_FLOAT.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0.0)
@@ -49,7 +44,9 @@ impl FromValue for i64 {
             Value::Float(f) => Ok(Some(f as i64)),
             Value::Bool(b) => Ok(Some(b.into())),
             Value::Str(s) if s.trim().is_empty() => Ok(None),
-            Value::Str(s) => Ok(Some(to_i(&s))),
+            // Ruby's `to_i` ("1_000" is 1000). A Bignum is 0 here and
+            // fails at the write, as Rails raises there.
+            Value::Str(s) => Ok(Some(Value::Str(s).to_i().unwrap_or(0))),
             other => Err(Error::Cast { expected: "integer", value: other }),
         }
     }

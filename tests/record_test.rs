@@ -52,6 +52,8 @@ fn test_integer_attributes_cast_like_active_model() {
     assert_eq!(None, note.comments_count);
     note.set("comments_count", Value::from("3")).unwrap();
     assert_eq!(Some(3), note.comments_count);
+    note.set("comments_count", Value::from("1_000")).unwrap();
+    assert_eq!(Some(1000), note.comments_count);
 }
 
 /// `where(comments_count: "99999999999999999999")` fails at the bind
