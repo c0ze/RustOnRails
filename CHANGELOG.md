@@ -2,6 +2,13 @@
 
 RustOnRails and Rutile share version numbers; each minor version is one milestone of [Rutile's roadmap](../Rutile/docs/roadmap.md).
 
+## 0.7.0
+
+- Relations compute `count`, `sum`, `minimum`, `maximum`, `pluck` and `exists?` in the SQL Rails writes: aggregates drop the order and keep the limit and offset; a count with a limit counts a subquery; `limit(0)` needs no query. `numeric` values (the `SUM` of a bigint) read back as Integers.
+- `Relation::batches` is `find_each`: by id, after the last id seen, with the relation's limit capping the total.
+- `Ctx::transaction_block` and `Request::transaction_block` run app code's `transaction do ... end`: the block's value, or `None` on `Error::Rollback`. A transaction inside an open one joins it, as in Active Record, so `save` inside a block no longer takes a savepoint of its own; the test's own transaction can't be joined, like Rails' fixture transaction.
+- `sum_integers` and `sum_floats` are `Array#sum`, raising `Error::NilCoerced` on a nil element.
+
 ## 0.6.0
 
 - `examples/store`, Rutile's third example, generated with methods that take typed parameters. No runtime changes were needed: typed parameters are plain Rust arguments.
