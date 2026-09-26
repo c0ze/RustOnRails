@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use rustonrails::{
     Behavior, Check, Ctx, Error, Handle, HasMany, Model, Record, Relation, Result, RubyString,
-    Time, model,
+    Time, model, sum_integers,
 };
 
 use super::{LineItem, Product};
@@ -61,7 +61,51 @@ impl Order {
         Ok(line_item)
     }
 
-    // app/models/order.rb:16
+    // app/models/order.rb:15
+    pub fn units(ctx: &mut Ctx, order: Handle<Order>) -> Result<i64> {
+        let line_items = Order::LINE_ITEMS.of(ctx, order);
+        Ok(line_items.sum::<i64>(ctx, "quantity")?)
+    }
+
+    // app/models/order.rb:20
+    pub fn subtotal_cents(ctx: &mut Ctx, order: Handle<Order>) -> Result<i64> {
+        let line_items = Order::LINE_ITEMS.of(ctx, order);
+        let records = line_items.load(ctx)?;
+        let mut mapped = Vec::with_capacity(records.len());
+        for item in records {
+            mapped.push(
+                ctx[item].quantity.ok_or(Error::Nil { what: "*" })?
+                    * ctx[item].unit_price_cents.ok_or(Error::Nil { what: "*" })?,
+            );
+        }
+        Ok(sum_integers(0, mapped)?)
+    }
+
+    // app/models/order.rb:26
+    pub fn reopen_bang(ctx: &mut Ctx, order: Handle<Order>) -> Result<()> {
+        ctx.transaction_block(|ctx| {
+            let line_items = Order::LINE_ITEMS.of(ctx, order);
+            let records = line_items.load(ctx)?;
+            for item in records {
+                let product = LineItem::PRODUCT.get(ctx, item)?;
+                let value = product.ok_or(Error::Nil { what: "update!" })?;
+                let value_2 = ctx[product.ok_or(Error::Nil { what: "stock" })?]
+                    .stock
+                    .ok_or(Error::Nil { what: "+" })?
+                    + ctx[item].quantity.ok_or(Error::Nil { what: "+" })?;
+                ctx[value].stock = Some(value_2);
+                ctx.save_bang(value)?;
+            }
+            ctx[order].status = Some("cart".to_string());
+            ctx[order].total_cents = None;
+            ctx[order].placed_at = None;
+            ctx.save_bang(order)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    // app/models/order.rb:38
     pub fn is_same_customer(
         ctx: &mut Ctx,
         order: Handle<Order>,

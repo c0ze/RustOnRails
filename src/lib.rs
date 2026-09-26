@@ -43,7 +43,7 @@ pub use model::BeforeTypeCast;
 pub use numericality::{Number, Numericality};
 pub use relation::{Batches, InnerJoin, Joinable, Relation, sanitize_sql_like};
 pub use secure_token::base58;
-pub use support::{Blank, RubyString, sum_integers};
+pub use support::{Blank, RubyString, sum_floats, sum_integers};
 pub use validation::Errors;
 pub use value::{Date, Time, Value, local_today, now, today};
 pub use serde_json::{Value as Json, json};

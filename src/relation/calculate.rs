@@ -2,7 +2,7 @@
 
 use super::{Filter, Relation};
 use crate::pg::{quote, read};
-use crate::{Ctx, FromValue, Handle, Model, Result, Value};
+use crate::{Ctx, Error, FromValue, Handle, Model, Result, Value};
 
 impl<M: Model> Relation<M> {
     /// `sum(:column)`: 0 when no row matches. The value is cast by the
@@ -40,6 +40,12 @@ impl<M: Model> Relation<M> {
         let (sql, params) = self.select_sql(&format!("{}.{}", quote(M::TABLE), quote(column)), true);
         let rows = self.run(ctx, &sql, &params)?;
         rows.iter().map(|row| T::from_value(M::behavior().from_database(column, read(row, 0)?))).collect()
+    }
+
+    /// `pluck(:column)` of a column that's never NULL.
+    pub fn pluck_present<T: FromValue>(&self, ctx: &mut Ctx, column: &str) -> Result<Vec<T>> {
+        let values = self.pluck(ctx, column)?;
+        values.into_iter().map(|value| value.ok_or(Error::Cast { expected: "a value of a NOT NULL column", value: Value::Nil })).collect()
     }
 
     /// `find_each(batch_size: size)`: the records in batches by id, each

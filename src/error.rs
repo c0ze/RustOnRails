@@ -31,6 +31,8 @@ pub enum Error {
     Rollback,
     /// A method called on nil, Ruby's `NoMethodError` for `nil`.
     Nil { what: &'static str },
+    /// nil where a number is added, Ruby's TypeError.
+    NilCoerced { into: &'static str },
     /// A method the value's class doesn't have, Ruby's `NoMethodError`.
     NoMethod { what: &'static str, value: Value },
     /// An Integer Ruby would promote to a Bignum.
@@ -59,6 +61,7 @@ impl fmt::Display for Error {
             Error::Abort => write!(f, "callback chain aborted"),
             Error::Rollback => write!(f, "ActiveRecord::Rollback"),
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
+            Error::NilCoerced { into } => write!(f, "nil can't be coerced into {into}"),
             Error::NoMethod { what, value } => write!(f, "undefined method '{what}' for {value:?}"),
             Error::Overflow { value } => write!(f, "{value} doesn't fit in a 64-bit integer"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),

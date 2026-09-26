@@ -5,11 +5,24 @@ use serde_json::Value as Json;
 
 use crate::{Error, Result, Value};
 
-/// `Array#sum` of Integers, from `start`. Where Ruby would go on in a
-/// Bignum this fails, naming the sum.
-pub fn sum_integers(start: i64, values: impl IntoIterator<Item = i64>) -> Result<i64> {
-    let sum = values.into_iter().fold(i128::from(start), |sum, value| sum + i128::from(value));
+/// `Array#sum` of Integers, from `start`. A nil element raises, as
+/// Ruby's TypeError; where Ruby would end in a Bignum this fails.
+pub fn sum_integers<V: Into<Option<i64>>>(start: i64, values: impl IntoIterator<Item = V>) -> Result<i64> {
+    let mut sum = i128::from(start);
+    for value in values {
+        sum += i128::from(value.into().ok_or(Error::NilCoerced { into: "Integer" })?);
+    }
     i64::try_from(sum).map_err(|_| Error::Overflow { value: sum.to_string() })
+}
+
+/// `Array#sum` from a Float `start`: each element added in turn, as Ruby
+/// does from a Float (from the Integer 0 it compensates rounding instead).
+pub fn sum_floats<V: Into<Option<f64>>>(start: f64, values: impl IntoIterator<Item = V>) -> Result<f64> {
+    let mut sum = start;
+    for value in values {
+        sum += value.into().ok_or(Error::NilCoerced { into: "Float" })?;
+    }
+    Ok(sum)
 }
 
 /// Ruby's `String#strip`, `#downcase` and `#upcase`. Rust's `trim` also

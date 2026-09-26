@@ -174,9 +174,27 @@ fn test_batches_walk_the_ids() {
 }
 
 #[test]
-fn test_sum_integers_fails_where_ruby_makes_a_bignum() {
+fn test_pluck_present_reads_a_not_null_column() {
+    let mut ctx = support::ctx();
+    articles(&mut ctx);
+    assert_eq!(vec![1, 2, 3, 4, 5], Article::all().order_asc("title").pluck_present::<i64>(&mut ctx, "comments_count").unwrap());
+}
+
+#[test]
+fn test_sum_integers_fails_where_ruby_raises() {
     assert_eq!(6, rustonrails::sum_integers(0, [1, 2, 3]).unwrap());
-    assert_eq!(0, rustonrails::sum_integers(0, []).unwrap());
+    assert_eq!(10, rustonrails::sum_integers(4, [Some(1), Some(2), Some(3)]).unwrap());
+    assert_eq!(0, rustonrails::sum_integers(0, Vec::<i64>::new()).unwrap());
+    assert!(matches!(rustonrails::sum_integers(0, [Some(1), None]), Err(Error::NilCoerced { into: "Integer" })));
     assert_eq!(i64::MIN, rustonrails::sum_integers(0, [i64::MIN, 1, -1]).unwrap());
     assert!(matches!(rustonrails::sum_integers(0, [i64::MAX, 1]), Err(Error::Overflow { value }) if value == "9223372036854775808"));
+}
+
+/// From a Float, Ruby adds each element in turn: 0.1 + 0.2 + 0.3 is
+/// 0.6000000000000001, where `[0.1, 0.2, 0.3].sum` from 0 compensates.
+#[test]
+fn test_sum_floats_adds_in_turn() {
+    assert_eq!(0.6000000000000001, rustonrails::sum_floats(0.0, [0.1, 0.2, 0.3]).unwrap());
+    assert_eq!(3.0, rustonrails::sum_floats(0.0, [1, 2].map(|item| item as f64)).unwrap());
+    assert!(matches!(rustonrails::sum_floats(0.0, [Some(1.0), None]), Err(Error::NilCoerced { into: "Float" })));
 }

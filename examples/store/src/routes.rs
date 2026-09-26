@@ -7,6 +7,24 @@ use crate::controllers::{OrdersController, ProductsController};
 /// config/routes.rb, in the order Rails matches it.
 pub fn routes() -> Router {
     Router::new()
+        // GET /products/stats(.:format) products#stats
+        .get(
+            "/products/stats(.:format)",
+            action("stats", ProductsController::stats),
+        )
+        // GET /products/low_stock(.:format) products#low_stock
+        .get(
+            "/products/low_stock(.:format)",
+            action("low_stock", ProductsController::low_stock),
+        )
+        // POST /products/deactivate_sold_out(.:format) products#deactivate_sold_out
+        .post(
+            "/products/deactivate_sold_out(.:format)",
+            action(
+                "deactivate_sold_out",
+                ProductsController::deactivate_sold_out,
+            ),
+        )
         // POST /products/:id/restock(.:format) products#restock
         .post(
             "/products/:id/restock(.:format)",
@@ -46,6 +64,21 @@ pub fn routes() -> Router {
         .post(
             "/orders/:id/add_item(.:format)",
             action("add_item", OrdersController::add_item),
+        )
+        // POST /orders/:id/place(.:format) orders#place
+        .post(
+            "/orders/:id/place(.:format)",
+            action("place", OrdersController::place),
+        )
+        // POST /orders/:id/reopen(.:format) orders#reopen
+        .post(
+            "/orders/:id/reopen(.:format)",
+            action("reopen", OrdersController::reopen),
+        )
+        // GET /orders/:id/summary(.:format) orders#summary
+        .get(
+            "/orders/:id/summary(.:format)",
+            action("summary", OrdersController::summary),
         )
         // POST /orders(.:format) orders#create
         .post(
