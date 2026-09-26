@@ -2,9 +2,9 @@ use std::error::Error as StdError;
 
 use bytes::BytesMut;
 use postgres::Row;
-use postgres::types::{IsNull, ToSql, Type, to_sql_checked};
+use postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 
-use crate::{Date, Result, Time, Value};
+use crate::{Date, Error, Result, Time, Value};
 
 /// Double-quotes an identifier. Identifiers come from generated code, never
 /// from user input; values always go as parameters.
@@ -29,10 +29,68 @@ pub(crate) fn read(row: &Row, index: usize) -> Result<Value> {
         row.try_get::<_, Option<Time>>(index)?.map(Value::Time)
     } else if ty == Type::DATE {
         row.try_get::<_, Option<Date>>(index)?.map(Value::Date)
+    } else if ty == Type::NUMERIC {
+        // `SUM` of a bigint column is a numeric. A whole number is an
+        // Integer, as Rails casts it by the column's type; one Ruby would
+        // make a Bignum fails, and a fraction stays its decimal text.
+        match row.try_get::<_, Option<Numeric>>(index)? {
+            Some(Numeric(text)) if text.trim_start_matches('-').bytes().all(|b| b.is_ascii_digit()) => {
+                Some(Value::Int(text.parse().map_err(|_| Error::Overflow { value: text.clone() })?))
+            }
+            Some(Numeric(text)) => Some(Value::Str(text)),
+            None => None,
+        }
     } else {
         row.try_get::<_, Option<String>>(index)?.map(Value::Str)
     };
     Ok(value.unwrap_or(Value::Nil))
+}
+
+/// A `numeric` as its decimal text, read from Postgres' binary format:
+/// base-10000 digits, the weight of the first, a sign and a display scale.
+struct Numeric(String);
+
+impl<'a> FromSql<'a> for Numeric {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> std::result::Result<Self, Box<dyn StdError + Sync + Send>> {
+        let word = |i: usize| -> std::result::Result<u16, Box<dyn StdError + Sync + Send>> {
+            let bytes = raw.get(2 * i..2 * i + 2).ok_or("a numeric shorter than its header says")?;
+            Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+        };
+        let (count, weight, sign, scale) = (word(0)? as usize, word(1)? as i16 as i64, word(2)?, word(3)? as usize);
+        match sign {
+            0xC000 => return Ok(Numeric("NaN".into())),
+            0xD000 => return Ok(Numeric("Infinity".into())),
+            0xF000 => return Ok(Numeric("-Infinity".into())),
+            _ => {}
+        }
+        let digits = (0..count).map(|i| word(4 + i)).collect::<std::result::Result<Vec<_>, _>>()?;
+        // Digit i carries weight `weight - i`, in base 10000.
+        let digit = |w: i64| -> u16 { usize::try_from(weight - w).ok().and_then(|i| digits.get(i).copied()).unwrap_or(0) };
+        let mut text = if sign == 0x4000 { "-".to_string() } else { String::new() };
+        if weight < 0 {
+            text.push('0');
+        } else {
+            text.push_str(&digit(weight).to_string());
+            for w in (0..weight).rev() {
+                text.push_str(&format!("{:04}", digit(w)));
+            }
+        }
+        if scale > 0 {
+            let mut fraction = String::new();
+            let mut w = -1;
+            while fraction.len() < scale {
+                fraction.push_str(&format!("{:04}", digit(w)));
+                w -= 1;
+            }
+            text.push('.');
+            text.push_str(&fraction[..scale]);
+        }
+        Ok(Numeric(text))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        *ty == Type::NUMERIC
+    }
 }
 
 impl ToSql for Value {

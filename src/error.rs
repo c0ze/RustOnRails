@@ -26,6 +26,9 @@ pub enum Error {
     RecordNotDestroyed { model: &'static str },
     /// A before callback stopped the chain, like `throw :abort`.
     Abort,
+    /// `raise ActiveRecord::Rollback`: rolls back the transaction block
+    /// around it, which then gives nil.
+    Rollback,
     /// A method called on nil, Ruby's `NoMethodError` for `nil`.
     Nil { what: &'static str },
     /// A method the value's class doesn't have, Ruby's `NoMethodError`.
@@ -54,6 +57,7 @@ impl fmt::Display for Error {
             Error::RecordNotSaved { .. } => write!(f, "Failed to save the record"),
             Error::RecordNotDestroyed { model } => write!(f, "Failed to destroy {model}"),
             Error::Abort => write!(f, "callback chain aborted"),
+            Error::Rollback => write!(f, "ActiveRecord::Rollback"),
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
             Error::NoMethod { what, value } => write!(f, "undefined method '{what}' for {value:?}"),
             Error::Overflow { value } => write!(f, "{value} doesn't fit in a 64-bit integer"),

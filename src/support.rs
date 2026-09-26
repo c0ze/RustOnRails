@@ -3,7 +3,14 @@
 
 use serde_json::Value as Json;
 
-use crate::Value;
+use crate::{Error, Result, Value};
+
+/// `Array#sum` of Integers, from `start`. Where Ruby would go on in a
+/// Bignum this fails, naming the sum.
+pub fn sum_integers(start: i64, values: impl IntoIterator<Item = i64>) -> Result<i64> {
+    let sum = values.into_iter().fold(i128::from(start), |sum, value| sum + i128::from(value));
+    i64::try_from(sum).map_err(|_| Error::Overflow { value: sum.to_string() })
+}
 
 /// Ruby's `String#strip`, `#downcase` and `#upcase`. Rust's `trim` also
 /// strips non-breaking and other Unicode spaces, and `to_lowercase` turns a

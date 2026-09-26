@@ -52,3 +52,9 @@ fn load(schema: &str) {
     }
     admin.batch_execute("SELECT pg_advisory_unlock(7351)").unwrap();
 }
+
+/// One column of a row as the record layer reads it, for tests of the
+/// Postgres types it decodes.
+pub fn read(row: &postgres::Row, index: usize) -> crate::Result<crate::Value> {
+    crate::pg::read(row, index)
+}

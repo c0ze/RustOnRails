@@ -4,8 +4,10 @@ use crate::association::Preload;
 use crate::records::from_row;
 use crate::{Ctx, Error, Handle, Model, Result, Value};
 
+mod calculate;
 mod sql;
 
+pub use calculate::Batches;
 pub use sql::sanitize_sql_like;
 
 #[derive(Clone, Debug)]
@@ -13,6 +15,8 @@ enum Filter {
     Eq(String, Value),
     NotEq(String, Value),
     Gte(String, Value),
+    /// `where(id: (last + 1)..)` as batches write it: `id > last`.
+    Gt(String, Value),
     In(String, Vec<Value>),
     /// `where(memberships: { user_id: 1 })`: a joined table's column, the
     /// value already cast by that table's model.
@@ -207,9 +211,20 @@ impl<M: Model> Relation<M> {
         Ok(relation.load(ctx)?.into_iter().next())
     }
 
+    /// `count`: `SELECT COUNT(*)` without the order; with a limit or an
+    /// offset, the count of a subquery that keeps them, as Rails writes it.
+    /// `limit(0)` is 0 without a query.
     pub fn count(&self, ctx: &mut Ctx) -> Result<i64> {
-        let (sql, params) = self.to_sql();
-        let rows = self.run(ctx, &format!("SELECT COUNT(*) FROM ({sql}) AS subquery"), &params)?;
+        if self.limit == Some(0) {
+            return Ok(0);
+        }
+        let (sql, params) = if self.limit.is_some() || self.offset.is_some() {
+            let (inner, params) = self.select_sql("1 AS one", true);
+            (format!("SELECT COUNT(*) FROM ({inner}) subquery_for_count"), params)
+        } else {
+            self.select_sql("COUNT(*)", false)
+        };
+        let rows = self.run(ctx, &sql, &params)?;
         Ok(rows[0].get(0))
     }
 
@@ -225,8 +240,14 @@ impl<M: Model> Relation<M> {
         self.clone().where_eq("id", id).exists(ctx)
     }
 
+    /// `exists?`: `SELECT 1 AS one ... LIMIT 1`, without the order and
+    /// keeping any offset. `limit(0)` exists nowhere, without a query.
     pub fn exists(&self, ctx: &mut Ctx) -> Result<bool> {
-        Ok(!self.clone().limit(1).fetch(ctx)?.is_empty())
+        if self.limit == Some(0) {
+            return Ok(false);
+        }
+        let (sql, params) = self.clone().limit(1).select_sql("1 AS one", false);
+        Ok(!self.run(ctx, &sql, &params)?.is_empty())
     }
 
     /// `find(id)`: the id is cast like any query value, so a param string

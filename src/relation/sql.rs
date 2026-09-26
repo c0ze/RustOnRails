@@ -12,7 +12,16 @@ impl<M: Model> Relation<M> {
     pub fn to_sql(&self) -> (String, Vec<Value>) {
         let table = quote(M::TABLE);
         let columns: Vec<String> = M::COLUMNS.iter().map(|c| format!("{table}.{}", quote(c))).collect();
-        let mut sql = format!("SELECT {} FROM {table}", columns.join(", "));
+        self.select_sql(&columns.join(", "), true)
+    }
+
+    /// `SELECT select FROM ...` with this relation's joins, conditions,
+    /// order (when `ordered`), limit and offset. Rails drops the order from
+    /// an aggregate, which Postgres would refuse without a GROUP BY, and
+    /// keeps the limit and offset, which then apply to its one row.
+    pub(crate) fn select_sql(&self, select: &str, ordered: bool) -> (String, Vec<Value>) {
+        let table = quote(M::TABLE);
+        let mut sql = format!("SELECT {select} FROM {table}");
         let mut params = Vec::new();
         let mut conditions = 0;
         // Every JOIN comes before the WHERE, as Rails writes them.
@@ -85,6 +94,7 @@ impl<M: Model> Relation<M> {
                 Filter::Eq(c, v) => (c, "=", v),
                 Filter::NotEq(c, v) => (c, "<>", v),
                 Filter::Gte(c, v) => (c, ">=", v),
+                Filter::Gt(c, v) => (c, ">", v),
             };
             let target = format!("{table}.{}", quote(column));
             match M::behavior().query_value(column, M::cast_query(column, value.clone())) {
@@ -96,7 +106,7 @@ impl<M: Model> Relation<M> {
                 }
             }
         }
-        if !self.orders.is_empty() {
+        if ordered && !self.orders.is_empty() {
             let orders: Vec<String> = self.orders.iter().map(|(c, dir)| format!("{table}.{} {dir}", quote(c))).collect();
             sql.push_str(&format!(" ORDER BY {}", orders.join(", ")));
         }
