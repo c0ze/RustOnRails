@@ -162,16 +162,21 @@ fn take_tls(url: &str) -> Result<(String, Tls)> {
     };
     // libpq's two URI prefixes; anything else is a key=value string.
     let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        // libpq reads a user and password only before the host's first `/`;
-        // the driver reads up to the first `@` anywhere. Where they'd differ
-        // (an `@` after that `/`), the driver would send part of the URL as
-        // the user name and drop the query's sslmode, so it's refused.
+        // The driver reads up to the first `@` anywhere as the user and
+        // password. An `@` after the host's first `/` or `?` would make it
+        // send part of the path or query as the user name and drop the
+        // query's sslmode, so such a URL is refused: the user name, password
+        // and query must spell `@`, `/` and `?` percent-encoded.
         let (scheme, after) = url.split_once("://").expect("a URL prefix");
-        let slash = after.find('/').unwrap_or(after.len());
-        if after.find('@').is_some_and(|at| at > slash) {
-            return Err(Error::Connect("an @ after the host in the database URL; write it as %40".to_string()));
+        let host_end = after.find(['/', '?']).unwrap_or(after.len());
+        if after.find('@').is_some_and(|at| at > host_end) {
+            return Err(Error::Connect(
+                "the database URL has an @ after its host; write @, / and ? in the user name, password and query \
+                 as %40, %2F and %3F"
+                    .to_string(),
+            ));
         }
-        let credentials = scheme.len() + 3 + after[..slash].find('@').map_or(0, |at| at + 1);
+        let credentials = scheme.len() + 3 + after[..host_end].find('@').map_or(0, |at| at + 1);
         match url[credentials..].find('?').map(|at| url.split_at(credentials + at)) {
             Some((base, query)) => {
                 let query = &query[1..];
@@ -333,20 +338,24 @@ mod tests {
         assert!(matches!(take_tls("host=h =x"), Err(Error::Connect(_))));
     }
 
-    /// A `?` in a password isn't the query: the driver reads up to the
-    /// first `@` as credentials, and so does this.
+    /// The query starts after the credentials; a `?` in a password has to
+    /// be %3F, since unencoded it can't be told from the query's start.
     #[test]
-    fn test_a_question_mark_in_a_password_isnt_the_query() {
-        let (rest, mode, root) = take("postgres://app:pa?ss@db/prod?sslmode=require&sslrootcert=/ca.pem");
-        assert_eq!(("postgres://app:pa?ss@db/prod".to_string(), Some(Mode::Require), Some("/ca.pem".to_string())), (rest, mode, root));
+    fn test_the_query_starts_after_the_credentials() {
+        let (rest, mode, root) = take("postgres://app:pa%3Fss@db/prod?sslmode=require&sslrootcert=/ca.pem");
+        assert_eq!(("postgres://app:pa%3Fss@db/prod".to_string(), Some(Mode::Require), Some("/ca.pem".to_string())), (rest, mode, root));
+        assert!(matches!(take_tls("postgres://app:pa?ss@db/prod?sslmode=require"), Err(Error::Connect(_))));
     }
 
-    /// An `@` after the host's `/` would be credentials to the driver and not
-    /// to libpq: refused, so the sslmode after it can't be lost.
+    /// An `@` after the host's `/` or `?` would be credentials to the
+    /// driver: refused, so the sslmode after it can't be lost.
     #[test]
     fn test_an_at_sign_after_the_host_is_refused() {
         let url = "postgres://db.example.com/prod?sslmode=verify-full&sslrootcert=/ca.pem&application_name=ops@web-1";
         assert!(matches!(take_tls(url), Err(Error::Connect(message)) if message.contains("%40")));
+        // With no path, the host ends at the `?`.
+        assert!(take_tls("postgres://db.example.com?sslmode=require&application_name=ops@web-1").is_err());
+        assert!(take_tls("postgres://u:pa/ss@db/prod").is_err());
         assert!(take_tls("postgres://db.example.com/prod?application_name=ops%40web-1&sslmode=require").is_ok());
     }
 

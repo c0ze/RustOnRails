@@ -12,7 +12,7 @@ A crate `rutile build` generates is configured from the environment, like a Rail
 
 | Variable | Default | |
 |---|---|---|
-| `DATABASE_URL` | (required) | A Postgres URL or `key=value` string. `sslmode` and `sslrootcert` work as in libpq: `disable`, `allow` and `prefer` (TLS when the server offers it, unverified; the default), `require` (TLS, unverified unless there's a root file), `verify-ca` and `verify-full`. A root file is `sslrootcert` or `~/.postgresql/root.crt`, and its CAs are the only ones trusted; `sslrootcert=system` trusts the system's, with `verify-full` only. |
+| `DATABASE_URL` | (required) | A Postgres URL or `key=value` string; in a URL, write `@`, `/` and `?` in the user name, password and query as `%40`, `%2F` and `%3F`. `sslmode` and `sslrootcert` work as in libpq: `disable`, `allow` and `prefer` (TLS when the server offers it, unverified; the default), `require` (TLS, unverified unless there's a root file), `verify-ca` and `verify-full`. A root file is `sslrootcert` or `~/.postgresql/root.crt`, and its CAs are the only ones trusted; `sslrootcert=system` trusts the system's, with `verify-full` only. |
 | `BIND` | `127.0.0.1:3000` | Address to listen on. |
 | `WORKERS` | `5` | Worker threads, each with its own database connection: Puma's threads. |
 | `MAX_CONNECTIONS` | `512` | Connections served at once; past it a new one gets a 503. |
