@@ -19,6 +19,7 @@ Known defects and loose ends in the runtime, kept here until they're fixed. The 
 ## Server
 
 - **Bodies in flight are bounded only per connection**: at the defaults, `MAX_CONNECTIONS` × `MAX_BODY_BYTES` is 5 GiB. A shared budget for buffered bodies would bound the total.
+- **The body deadline's credit is earned up front.** A client that sends all but the last byte of a 10 MiB body at once has earned `BODY_TIMEOUT` plus 10 MiB / `MIN_RATE` (about 2.9 hours at the defaults) and can then stall, holding the connection and the buffered body that long. A cap on any single stall inside a body would close it.
 - **`OPTIONS *` and absolute-form targets** (`GET http://host/path`) are refused with a 400; RFC 9112 asks servers to accept the absolute form.
 - **A bare LF after chunk data** is accepted where RFC 9112 wants CRLF.
 

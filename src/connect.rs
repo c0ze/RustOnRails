@@ -162,9 +162,16 @@ fn take_tls(url: &str) -> Result<(String, Tls)> {
     };
     // libpq's two URI prefixes; anything else is a key=value string.
     let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        // The driver reads everything up to the first `@` as the user and
-        // password, so the query starts at the first `?` after it.
-        let credentials = url.find('@').map_or(0, |at| at + 1);
+        // libpq reads a user and password only before the host's first `/`;
+        // the driver reads up to the first `@` anywhere. Where they'd differ
+        // (an `@` after that `/`), the driver would send part of the URL as
+        // the user name and drop the query's sslmode, so it's refused.
+        let (scheme, after) = url.split_once("://").expect("a URL prefix");
+        let slash = after.find('/').unwrap_or(after.len());
+        if after.find('@').is_some_and(|at| at > slash) {
+            return Err(Error::Connect("an @ after the host in the database URL; write it as %40".to_string()));
+        }
+        let credentials = scheme.len() + 3 + after[..slash].find('@').map_or(0, |at| at + 1);
         match url[credentials..].find('?').map(|at| url.split_at(credentials + at)) {
             Some((base, query)) => {
                 let query = &query[1..];
@@ -332,6 +339,15 @@ mod tests {
     fn test_a_question_mark_in_a_password_isnt_the_query() {
         let (rest, mode, root) = take("postgres://app:pa?ss@db/prod?sslmode=require&sslrootcert=/ca.pem");
         assert_eq!(("postgres://app:pa?ss@db/prod".to_string(), Some(Mode::Require), Some("/ca.pem".to_string())), (rest, mode, root));
+    }
+
+    /// An `@` after the host's `/` would be credentials to the driver and not
+    /// to libpq: refused, so the sslmode after it can't be lost.
+    #[test]
+    fn test_an_at_sign_after_the_host_is_refused() {
+        let url = "postgres://db.example.com/prod?sslmode=verify-full&sslrootcert=/ca.pem&application_name=ops@web-1";
+        assert!(matches!(take_tls(url), Err(Error::Connect(message)) if message.contains("%40")));
+        assert!(take_tls("postgres://db.example.com/prod?application_name=ops%40web-1&sslmode=require").is_ok());
     }
 
     /// Whatever sslmode the driver found and this didn't becomes this one's,
