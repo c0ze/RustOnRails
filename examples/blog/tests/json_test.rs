@@ -66,3 +66,12 @@ fn test_render_option_renders_nil_as_null() {
     assert_eq!(json!(null), options.render_option(&mut ctx, None).unwrap());
     assert_eq!(options.render(&mut ctx, post).unwrap(), options.render_option(&mut ctx, Some(post)).unwrap());
 }
+
+/// Rails leaves a nil belongs_to out of `include:` rather than writing null.
+#[test]
+fn test_a_nil_association_is_left_out_of_include() {
+    let mut ctx = support::ctx();
+    let post = ctx.build(Post { title: Some("t".into()), body: Some("b".into()), ..Post::new_record() });
+    let json = AsJson::<Post>::new().include(&Post::USER, AsJson::new()).render(&mut ctx, post).unwrap();
+    assert!(json.get("user").is_none(), "{json}");
+}

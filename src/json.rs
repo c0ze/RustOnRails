@@ -103,7 +103,9 @@ impl<M: Model> AsJson<M> {
             map.insert(column.to_string(), value_json(ctx[record].get(column)));
         }
         for nested in &self.include {
-            map.insert(nested.key().to_string(), nested.render(ctx, record)?);
+            if let Some(json) = nested.render(ctx, record)? {
+                map.insert(nested.key().to_string(), json);
+            }
         }
         Ok(Json::Object(map))
     }
@@ -121,7 +123,8 @@ impl<M: Model> AsJson<M> {
 
 trait Nested<M> {
     fn key(&self) -> &'static str;
-    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Json>;
+    /// None leaves the key out, as Rails does for a nil association.
+    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Option<Json>>;
 }
 
 struct One<M: 'static, T: 'static> {
@@ -134,10 +137,10 @@ impl<M: Model, T: Model> Nested<M> for One<M, T> {
         self.association.name
     }
 
-    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Json> {
+    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Option<Json>> {
         match self.association.get(ctx, owner)? {
-            Some(target) => self.options.render(ctx, target),
-            None => Ok(Json::Null),
+            Some(target) => self.options.render(ctx, target).map(Some),
+            None => Ok(None),
         }
     }
 }
@@ -152,8 +155,8 @@ impl<M: Model, T: Model> Nested<M> for Many<M, T> {
         self.association.name
     }
 
-    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Json> {
+    fn render(&self, ctx: &mut Ctx, owner: Handle<M>) -> Result<Option<Json>> {
         let children = self.association.of(ctx, owner).load(ctx)?;
-        self.options.render_all(ctx, &children)
+        self.options.render_all(ctx, &children).map(Some)
     }
 }
