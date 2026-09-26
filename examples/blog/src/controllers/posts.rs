@@ -122,7 +122,7 @@ impl PostsController {
 
     // app/controllers/posts_controller.rb:37
     fn set_post(&mut self, req: &mut Request) -> Result<()> {
-        self.post = Some(Post::find(&mut req.ctx, req.params.value("id"))?);
+        self.post = Some(Post::find(&mut req.ctx, req.params.value("id")?)?);
         Ok(())
     }
 

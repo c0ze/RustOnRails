@@ -56,7 +56,7 @@ impl Product {
         } else {
             Ok(Value::from(format!(
                 "{} ({})",
-                ctx[product].name.clone().unwrap_or_default(),
+                ctx[product].name.clone().as_deref().unwrap_or_default(),
                 tag.to_s()
             )))
         }
