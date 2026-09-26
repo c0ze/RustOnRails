@@ -45,6 +45,10 @@ fn load(schema: &str) {
     let loaded: Option<String> =
         db.query_opt("SELECT digest FROM public.rustonrails_schema", &[]).ok().flatten().map(|row| row.get(0));
     if loaded.as_deref() != Some(digest.as_str()) {
+        // Only a database this loaded, or an empty one, is dropped: a URL
+        // pointed at an app's own test database mustn't wipe it.
+        let tables: i64 = db.query_one("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'", &[]).unwrap().get(0);
+        assert!(loaded.is_some() || tables == 0, "{url} has tables RustOnRails didn't load; refusing to drop them");
         db.batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").unwrap();
         db.batch_execute(schema).unwrap();
         db.batch_execute("CREATE TABLE public.rustonrails_schema (digest text NOT NULL)").unwrap();
