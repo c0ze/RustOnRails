@@ -96,13 +96,10 @@ impl ProductsController {
 
     // app/controllers/products_controller.rb:22
     pub fn restock(&mut self, req: &mut Request) -> Result<Response> {
+        let product = self.product.ok_or(Error::Nil { what: "restock!" })?;
         let amount = req.params.fetch("amount", 0).to_i()?;
         let amount_2 = self.amount(req, amount)?;
-        Product::restock_bang(
-            &mut req.ctx,
-            self.product.ok_or(Error::Nil { what: "restock!" })?,
-            amount_2,
-        )?;
+        Product::restock_bang(&mut req.ctx, product, amount_2)?;
         Ok(Response::json(
             status::OK,
             AsJson::<Product>::new().render_option(&mut req.ctx, self.product)?,
