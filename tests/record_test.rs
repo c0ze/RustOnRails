@@ -54,6 +54,16 @@ fn test_integer_attributes_cast_like_active_model() {
     assert_eq!(Some(3), note.comments_count);
 }
 
+/// `where(comments_count: "99999999999999999999")` fails at the bind
+/// rather than matching the rows holding what assignment casts it to.
+#[test]
+fn test_an_integer_too_big_to_query_keeps_its_value() {
+    assert_eq!(Value::Int(7), Note::cast_query("comments_count", Value::from("7")));
+    assert_eq!(Value::Nil, Note::cast_query("comments_count", Value::from("abc")));
+    let big = Value::from("99999999999999999999");
+    assert_eq!(big, Note::cast_query("comments_count", big.clone()));
+}
+
 #[test]
 fn test_handles_alias_like_ruby_variables() {
     let mut ctx = support::ctx();

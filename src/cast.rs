@@ -61,6 +61,15 @@ impl FromValue for i64 {
             other => Self::from_value(other).ok().flatten(),
         }
     }
+
+    /// A number too big for a bigint keeps its value, so binding it fails
+    /// rather than matching whatever number the assignment cast gives.
+    fn query(value: Value) -> Value {
+        match value {
+            Value::Str(_) | Value::Float(_) if matches!(value.to_i(), Err(Error::Overflow { .. })) => value,
+            other => Self::serialize(other).map_or(Value::Nil, Value::Int),
+        }
+    }
 }
 
 impl FromValue for f64 {

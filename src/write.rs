@@ -13,7 +13,20 @@ pub(crate) fn fill_timestamps<M: Record>(record: &mut M, time: Time) -> Result<(
 }
 
 fn database_values<M: Model>(record: &M, columns: &[&str]) -> Result<Vec<Value>> {
-    columns.iter().map(|c| M::behavior().to_database_for_write(c, record.get(c))).collect()
+    columns.iter().map(|c| database_value(record, c)).collect()
+}
+
+/// An integer attribute assigned a number Ruby would make a Bignum was
+/// validated as given, like Rails; writing it fails, as Rails raises
+/// ActiveModel::RangeError, rather than storing what the cast made of it.
+fn database_value<M: Model>(record: &M, column: &str) -> Result<Value> {
+    let value = record.get(column);
+    if let Some(given) = record.before_type_cast().given(column, &value)
+        && crate::records::bignum(&value, Some(given))
+    {
+        given.to_i()?;
+    }
+    M::behavior().to_database_for_write(column, value)
 }
 
 /// One INSERT of every column (id only when set); returns the new id.

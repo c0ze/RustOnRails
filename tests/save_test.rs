@@ -219,3 +219,22 @@ fn test_unknown_enum_label_raises_on_write() {
     assert!(matches!(error, Error::InvalidEnum { .. }), "{error:?}");
     assert_eq!("'archived' is not a valid status", error.to_string());
 }
+
+/// A count too big for a bigint is validated as given, then refused at the
+/// write, as Rails raises ActiveModel::RangeError, instead of saving 0.
+#[test]
+fn test_an_integer_ruby_would_make_a_bignum_is_not_written() {
+    let mut ctx = support::ctx();
+    let owner = Plain::create_bang(&mut ctx, Plain { name: Some("Ann".into()), email: Some("ann@example.com".into()), ..Plain::new_record() }).unwrap();
+    let user_id = ctx[owner].id;
+    let post = Loose::create_bang(&mut ctx, Loose { user_id, title: Some("t".into()), ..Loose::new_record() }).unwrap();
+    ctx.assign(post, &[("comments_count".into(), "99999999999999999999".into())]).unwrap();
+    let error = ctx.save(post).unwrap_err();
+    assert!(matches!(error, Error::Overflow { .. }), "{error:?}");
+    let id = ctx[post].id.unwrap();
+    let stored = ctx.query("SELECT comments_count FROM posts WHERE id = $1", &[id.into()]).unwrap();
+    assert_eq!(0, stored[0].get::<_, i32>(0));
+    let fresh = Loose::create(&mut ctx, Loose { user_id, title: Some("u".into()), ..Loose::new_record() }).unwrap();
+    ctx.assign(fresh, &[("comments_count".into(), 1e20.into())]).unwrap();
+    assert!(matches!(ctx.save(fresh), Err(Error::Overflow { .. })));
+}

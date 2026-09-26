@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use postgres::Row;
 use regex::Regex;
 
-use crate::{Ctx, Errors, Model, Result, Value, pg};
+use crate::{Ctx, Error, Errors, Model, Result, Value, pg};
 
 /// Refers to a record loaded into a `Ctx`, the way a Ruby variable refers
 /// to an object: copying a handle doesn't copy the record.
@@ -137,7 +137,8 @@ impl Ctx {
             .copied()
             .filter(|c| {
                 let (old, new) = (base.get(c), slot.record.get(c));
-                old != new || number_to_non_number(&old, &new, slot.record.before_type_cast().given(c, &new))
+                let given = slot.record.before_type_cast().given(c, &new);
+                old != new || number_to_non_number(&old, &new, given) || bignum(&new, given)
             })
             .collect()
     }
@@ -188,6 +189,12 @@ fn number_to_non_number(old: &Value, new: &Value, given: Option<&Value>) -> bool
         _ => false,
     };
     matches!(new, Value::Int(_) | Value::Float(_)) && !old.is_nil() && non_number
+}
+
+/// An integer attribute given a number Ruby would make a Bignum holds
+/// something else, but Rails holds the Bignum, which is a change.
+pub(crate) fn bignum(new: &Value, given: Option<&Value>) -> bool {
+    matches!(new, Value::Int(_)) && given.is_some_and(|g| matches!(g.to_i(), Err(Error::Overflow { .. })))
 }
 
 /// Builds a record from a row, turning enum integers back into labels.
