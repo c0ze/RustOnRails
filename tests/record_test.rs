@@ -115,4 +115,6 @@ fn test_errors_keep_order_and_humanize() {
     assert_eq!(vec!["can't be blank", "is too short (minimum is 3 characters)"], errors.on("title"));
     assert_eq!(vec!["title", "user_id"], errors.attributes());
     assert_eq!("User must exist", errors.full_messages()[1]);
+    ctx.errors_mut(note).add("base", "Something went wrong");
+    assert_eq!(Some(&"Something went wrong".to_string()), ctx.errors(note).full_messages().last());
 }

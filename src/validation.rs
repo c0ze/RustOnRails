@@ -37,9 +37,10 @@ impl Errors {
         seen
     }
 
-    /// "Title can't be blank", as in `errors.full_messages`.
+    /// "Title can't be blank", as in `errors.full_messages`; a `:base`
+    /// error is its message alone.
     pub fn full_messages(&self) -> Vec<String> {
-        self.entries.iter().map(|(a, m)| format!("{} {m}", humanize(a))).collect()
+        self.entries.iter().map(|(a, m)| if a == "base" { m.clone() } else { format!("{} {m}", humanize(a)) }).collect()
     }
 }
 
