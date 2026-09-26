@@ -46,10 +46,15 @@ impl<M: Model> Relation<M> {
             let (column, op, value) = match filter {
                 Filter::In(column, values) => {
                     let target = format!("{table}.{}", quote(column));
-                    let (nils, cast): (Vec<Value>, Vec<Value>) = values
+                    // Rails takes the nils out as given; a value that casts to
+                    // nil stays in the list as a NULL bind, which matches no row.
+                    let nils = values.iter().any(Value::is_nil);
+                    let cast: Vec<Value> = values
                         .iter()
+                        .filter(|v| !v.is_nil())
                         .map(|v| M::behavior().query_value(column, M::cast_query(column, v.clone())))
-                        .partition(Value::is_nil);
+                        .filter(|v| !v.is_nil())
+                        .collect();
                     // Rails: `x IN (...)`, `OR x IS NULL` when the list holds nil.
                     let mut any = Vec::new();
                     if !cast.is_empty() {
@@ -58,7 +63,7 @@ impl<M: Model> Relation<M> {
                         let marks: Vec<String> = (start + 1..=params.len()).map(|i| format!("${i}")).collect();
                         any.push(format!("{target} IN ({})", marks.join(", ")));
                     }
-                    if !nils.is_empty() {
+                    if nils {
                         any.push(format!("{target} IS NULL"));
                     }
                     match any.as_slice() {

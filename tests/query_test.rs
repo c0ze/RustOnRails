@@ -203,6 +203,10 @@ fn test_where_in_with_nil_matches_null_rows() {
     assert_eq!(1, count(&mut ctx, vec![Value::Nil]));
     assert_eq!(1, count(&mut ctx, vec!["b".into()]));
     assert_eq!(0, count(&mut ctx, vec![]));
+    // A member that casts to nil is a NULL bind in Rails' IN list, not IS NULL.
+    let ids = |ctx: &mut rustonrails::Ctx, values: Vec<Value>| Article::all().where_in("user_id", values).count(ctx).unwrap();
+    assert_eq!(0, ids(&mut ctx, vec!["abc".into()]));
+    assert_eq!(2, ids(&mut ctx, vec!["abc".into(), ann.into()]));
 }
 
 /// `where(user_id: "")` binds NULL in Rails, which matches no row, where
