@@ -35,7 +35,7 @@ impl Response {
     /// String), anything else its JSON.
     pub fn json_value(status: u16, value: Value) -> Self {
         match value {
-            Value::Str(text) => Self { status, content_type: Some("application/json; charset=utf-8"), body: text.into_bytes() },
+            Value::Str(text) => Self { body: text.into_bytes(), ..Self::head(status) }.typed("application/json; charset=utf-8"),
             other => Self::json(status, value_json(other)),
         }
     }
@@ -43,6 +43,10 @@ impl Response {
     /// `head status`
     pub fn head(status: u16) -> Self {
         Self { status, content_type: None, body: Vec::new(), cookies: Vec::new(), raised: false }
+    }
+
+    fn typed(self, content_type: &'static str) -> Self {
+        Self { content_type: Some(content_type), ..self }
     }
 
     /// The body parsed as JSON (null when it isn't).

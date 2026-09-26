@@ -42,7 +42,7 @@ impl CartsController {
 
     // app/controllers/carts_controller.rb:10
     pub fn add(&mut self, req: &mut Request) -> Result<Response> {
-        let product = Product::find(&mut req.ctx, req.params.value("product_id"))?;
+        let product = Product::find(&mut req.ctx, req.params.value("product_id")?)?;
         let value = req.session.get("product_id")?;
         let quantity = if value.equals(&Value::from(req.ctx[product].id)) {
             req.session.get("quantity")?.to_i()?
@@ -53,10 +53,10 @@ impl CartsController {
         req.session.set("product_id", Value::from(id))?;
         req.session.set(
             "quantity",
-            Value::from(quantity + req.params.fetch("quantity", 1).to_i()?),
+            Value::from(quantity + req.params.fetch("quantity", 1)?.to_i()?),
         )?;
-        if req.params.value("shopper").is_present() {
-            req.session.set("shopper", req.params.value("shopper"))?;
+        if req.params.value("shopper")?.is_present() {
+            req.session.set("shopper", req.params.value("shopper")?)?;
         }
         let value_2 = (Value::from(req.cookies.get("visits")).to_i()? + 1).to_string();
         req.cookies.set("visits", value_2);

@@ -262,7 +262,7 @@ impl ProductsController {
     // app/controllers/products_controller.rb:92
     pub fn restock_later(&mut self, req: &mut Request) -> Result<Response> {
         let product = self.product;
-        let amount = req.params.fetch("amount", 1).to_i()?;
+        let amount = req.params.fetch("amount", 1)?.to_i()?;
         let amount_2 = self.amount(req, amount)?;
         crate::jobs::restock_job::RESTOCK_JOB.perform_later(
             &crate::jobs::APP,
