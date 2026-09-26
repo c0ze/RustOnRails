@@ -752,6 +752,7 @@ dependencies = [
  "form_urlencoded",
  "getrandom",
  "native-tls",
+ "percent-encoding",
  "postgres",
  "postgres-native-tls",
  "regex",

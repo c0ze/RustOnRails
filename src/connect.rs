@@ -63,12 +63,22 @@ pub(crate) fn connect(url: &str) -> Result<Client> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let (mode, roots) = settle(&tls, home.as_deref())?;
     let mut config: postgres::Config = url.parse()?;
-    config.ssl_mode(match mode {
+    if let Some(driver) = driver_mode(&tls, mode, &roots) {
+        config.ssl_mode(driver);
+    }
+    Ok(config.connect(connector(mode, &roots)?)?)
+}
+
+/// The mode to hand the driver, when it's ours to decide. Only a mode found
+/// here replaces the driver's own reading of the URL: if an `sslmode` got
+/// past `take_tls` (a `?` in a password), the driver's `require` stands,
+/// and a verify mode it doesn't know fails its parse.
+fn driver_mode(tls: &Tls, mode: Mode, roots: &Roots) -> Option<SslMode> {
+    (tls.mode.is_some() || *roots == Roots::System).then_some(match mode {
         Mode::Disable => SslMode::Disable,
         Mode::Prefer => SslMode::Prefer,
         _ => SslMode::Require,
-    });
-    Ok(config.connect(connector(mode, &roots)?)?)
+    })
 }
 
 /// The mode and roots libpq would use. `verify-ca` and `verify-full` need
@@ -145,13 +155,17 @@ fn take_tls(url: &str) -> Result<(String, Tls)> {
         "sslmode" => mode = Some(value),
         _ => root_cert = Some(value),
     };
-    let rest = if url.contains("://") {
+    // libpq's two URI prefixes; anything else is a key=value string.
+    let rest = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         match url.split_once('?') {
             Some((base, query)) => {
                 let mut kept = Vec::new();
                 for pair in query.split('&') {
-                    match form_urlencoded::parse(pair.as_bytes()).next() {
-                        Some((key, value)) if key == "sslmode" || key == "sslrootcert" => keep(&key, value.into_owned()),
+                    // Percent-decoded as the driver does it: `+` is a plus.
+                    let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                    let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned();
+                    match decode(key).as_str() {
+                        key @ ("sslmode" | "sslrootcert") => keep(key, decode(value)),
                         _ => kept.push(pair),
                     }
                 }
@@ -189,8 +203,9 @@ struct Setting<'a> {
 }
 
 /// A libpq connection string's settings, in order: a value is a single
-/// word or a quoted string, where `\'` and `\\` stand for `'` and `\`, so
-/// `application_name='x sslmode=disable'` is one setting, not two.
+/// word or a quoted string, and a backslash in either takes the next
+/// character as it is, so `application_name='x sslmode=disable'` and
+/// `application_name=x\ sslmode=disable` are each one setting, not two.
 fn settings(string: &str) -> Result<Vec<Setting<'_>>> {
     let malformed = || Error::Connect("the database connection string isn't `key=value` pairs".to_string());
     let bytes = string.as_bytes();
@@ -241,11 +256,17 @@ fn settings(string: &str) -> Result<Vec<Setting<'_>>> {
             }
             i += 1;
         } else {
-            let from = i;
-            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
-                i += 1;
+            while let Some(c) = string[i..].chars().next().filter(|c| !c.is_whitespace()) {
+                i += c.len_utf8();
+                if c == '\\'
+                    && let Some(next) = string[i..].chars().next()
+                {
+                    value.push(next);
+                    i += next.len_utf8();
+                } else {
+                    value.push(c);
+                }
             }
-            value.push_str(&string[from..i]);
         }
         found.push(Setting { key, value, raw: &string[start..i] });
     }
@@ -269,6 +290,8 @@ mod tests {
         );
         assert_eq!(("postgresql://h/db".into(), Some(Mode::Require), None), take("postgresql://h/db?sslmode=require"));
         assert_eq!(("postgres://h/db".into(), Some(Mode::Prefer), None), take("postgres://h/db?sslmode=allow"));
+        // Percent-decoding only: a `+` stays a plus.
+        assert_eq!(Some("/certs/ca+2025.pem".into()), take("postgres://h/db?sslrootcert=/certs/ca+2025.pem").2);
     }
 
     #[test]
@@ -283,8 +306,29 @@ mod tests {
             ("host=h application_name='prod sslmode=disable'".into(), Some(Mode::VerifyFull), None),
             take("host=h sslmode=verify-full application_name='prod sslmode=disable'")
         );
+        // So is one behind a backslash-escaped space, as libpq reads it.
+        assert_eq!(
+            ("host=h application_name=x\\ sslmode=disable".into(), Some(Mode::VerifyFull), None),
+            take("host=h sslmode=verify-full application_name=x\\ sslmode=disable")
+        );
+        // `://` in a value doesn't make a connection string a URL.
+        assert_eq!(("host=h password=x://y".into(), Some(Mode::Require), None), take("host=h password=x://y sslmode=require"));
         assert!(matches!(take_tls("host=h application_name='unterminated"), Err(Error::Connect(_))));
         assert!(matches!(take_tls("host=h =x"), Err(Error::Connect(_))));
+    }
+
+    /// `postgres://app:pa?ss@db/prod?sslmode=require` splits at the wrong
+    /// `?`, so `take_tls` finds no mode; the driver's `require` must stand
+    /// rather than become `prefer`.
+    #[test]
+    fn test_a_mode_this_missed_is_left_to_the_driver() {
+        let url = "postgres://app:pa?ss@db/prod?sslmode=require";
+        let (rest, found) = take_tls(url).unwrap();
+        assert_eq!((url, None), (rest.as_str(), found.mode));
+        let (mode, roots) = settle(&found, None).unwrap();
+        assert!(driver_mode(&found, mode, &roots).is_none());
+        let explicit = tls(Some(Mode::Disable), None);
+        assert!(matches!(driver_mode(&explicit, Mode::Disable, &Roots::None), Some(SslMode::Disable)));
     }
 
     fn tls(mode: Option<Mode>, root_cert: Option<&str>) -> Tls {
