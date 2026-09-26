@@ -13,10 +13,10 @@ fn test_query_strings_parse_like_rails() {
 #[test]
 fn test_query_overrides_body_and_path_overrides_both() {
     let mut params = Params::new(map(json!({"id": "body", "a": 1})), map(json!({"id": "query"})));
-    assert_eq!(Value::from("query"), params.value("id"));
+    assert_eq!(Value::from("query"), params.value("id").unwrap());
     params.merge_path(map(json!({"id": "7"})));
-    assert_eq!(Value::from("7"), params.value("id"));
-    assert_eq!(Value::Int(1), params.value("a"));
+    assert_eq!(Value::from("7"), params.value("id").unwrap());
+    assert_eq!(Value::Int(1), params.value("a").unwrap());
 }
 
 #[test]
@@ -78,7 +78,26 @@ fn test_expect_needs_a_permitted_key() {
 #[test]
 fn test_fetch_falls_back_only_when_absent() {
     let params = Params::new(map(json!({"page": "3", "none": null})), map(json!({})));
-    assert_eq!(Value::from("3"), params.fetch("page", 1));
-    assert_eq!(Value::Int(1), params.fetch("missing", 1));
-    assert_eq!(Value::Nil, params.fetch("none", 1));
+    assert_eq!(Value::from("3"), params.fetch("page", 1).unwrap());
+    assert_eq!(Value::Int(1), params.fetch("missing", 1).unwrap());
+    assert_eq!(Value::Nil, params.fetch("none", 1).unwrap());
+}
+
+/// A Value holds no array or hash: reading one as a scalar is an error,
+/// where nil would answer differently from Rails.
+#[test]
+fn test_an_array_or_a_hash_isnt_a_value() {
+    let body = serde_json::json!({ "list": [1, 2], "hash": { "a": 1 }, "n": 1 });
+    let params = Params::new(body.as_object().unwrap().clone(), serde_json::Map::new());
+    assert_eq!("params[:list] is an array, which a Value can't hold", params.value("list").unwrap_err().to_string());
+    assert_eq!("params[:hash] is a hash, which a Value can't hold", params.fetch("hash", 1).unwrap_err().to_string());
+    assert_eq!(Value::Int(1), params.value("n").unwrap());
+}
+
+/// `render json:` sends a String as it is and anything else as JSON.
+#[test]
+fn test_render_json_of_a_value() {
+    assert_eq!(b"sold out".to_vec(), Response::json_value(200, Value::from("sold out")).body);
+    assert_eq!(b"3".to_vec(), Response::json_value(200, Value::Int(3)).body);
+    assert_eq!(b"null".to_vec(), Response::json_value(200, Value::Nil).body);
 }

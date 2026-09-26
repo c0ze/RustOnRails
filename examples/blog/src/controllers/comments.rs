@@ -80,7 +80,7 @@ impl CommentsController {
 
     // app/controllers/comments_controller.rb:19
     fn set_post(&mut self, req: &mut Request) -> Result<()> {
-        self.post = Some(Post::find(&mut req.ctx, req.params.value("post_id"))?);
+        self.post = Some(Post::find(&mut req.ctx, req.params.value("post_id")?)?);
         Ok(())
     }
 

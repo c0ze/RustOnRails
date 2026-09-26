@@ -18,7 +18,7 @@ impl Controller for PostsController {
     }
 
     fn before(&mut self, req: &mut Request, action: &str) -> Result<Option<Response>> {
-        if req.params.value("halt").is_blank() {
+        if req.params.value("halt")?.is_blank() {
             if matches!(action, "show" | "update") {
                 self.set_post(req)?;
             }
@@ -39,7 +39,7 @@ impl Controller for PostsController {
 
 impl PostsController {
     fn set_post(&mut self, req: &mut Request) -> Result<()> {
-        let id = req.params.value("id");
+        let id = req.params.value("id")?;
         self.post = Some(Post::find(&mut req.ctx, id)?);
         Ok(())
     }

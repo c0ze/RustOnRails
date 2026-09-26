@@ -33,7 +33,7 @@ impl Controller for UsersController {
 impl UsersController {
     // app/controllers/users_controller.rb:2
     pub fn show(&mut self, req: &mut Request) -> Result<Response> {
-        let user = User::find(&mut req.ctx, req.params.value("id"))?;
+        let user = User::find(&mut req.ctx, req.params.value("id")?)?;
         Ok(Response::json(
             status::OK,
             AsJson::<User>::new().render(&mut req.ctx, user)?,
@@ -45,11 +45,7 @@ impl UsersController {
         let user = User::find_by_bang(
             &mut req.ctx,
             "email",
-            req.params
-                .value("email")
-                .to_ruby_string()
-                .strip()
-                .downcase(),
+            req.params.value("email")?.to_s().strip().downcase(),
         )?;
         Ok(Response::json(
             status::OK,

@@ -53,7 +53,7 @@ impl Controller for UsersController {
 impl UsersController {
     // app/controllers/users_controller.rb:4
     pub fn show(&mut self, req: &mut Request) -> Result<Response> {
-        let user = User::find(&mut req.ctx, req.params.value("id"))?;
+        let user = User::find(&mut req.ctx, req.params.value("id")?)?;
         Ok(Response::json(
             status::OK,
             AsJson::<User>::new()
