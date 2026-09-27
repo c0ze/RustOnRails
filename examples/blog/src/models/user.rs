@@ -37,7 +37,7 @@ impl Model for User {
 // validates :email, uniqueness
 .validates("email", Check::Uniqueness { scope: &[] })
 // validates :email, format
-.validates("email", Check::Format(Regex::new(r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\z").expect("the Ruby regexp compiles")))
+.validates("email", Check::Format(Regex::new(r"\A[a-zA-Z0-9.!\#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\z").expect("app/models/user.rb: a format regexp")))
 // before_validation (app/models/user.rb:5)
 .before_validation(|ctx, user| {
 let email = ctx[user].email.clone().unwrap_or_default().strip().downcase();

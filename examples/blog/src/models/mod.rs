@@ -9,3 +9,12 @@ pub use application_record::ApplicationRecordScopes;
 pub use comment::Comment;
 pub use post::{Post, PostScopes};
 pub use user::User;
+
+/// Builds every model's validations and callbacks, so that one Rust can't
+/// build (a regexp it can't parse) stops the server at boot.
+pub fn behaviors() {
+    use rustonrails::Model;
+    Comment::behavior();
+    Post::behavior();
+    User::behavior();
+}

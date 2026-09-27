@@ -8,6 +8,7 @@ use rustonrails::Limits;
 use rustonrails::server::{self, Config};
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    blog::models::behaviors();
     let config = Config {
         address: std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3000".into()),
         database_url: std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is not set")?,

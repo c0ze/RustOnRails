@@ -9,3 +9,13 @@ pub use membership::{Membership, MembershipScopes};
 pub use project::{Project, ProjectScopes};
 pub use task::{Task, TaskScopes};
 pub use user::User;
+
+/// Builds every model's validations and callbacks, so that one Rust can't
+/// build (a regexp it can't parse) stops the server at boot.
+pub fn behaviors() {
+    use rustonrails::Model;
+    Membership::behavior();
+    Project::behavior();
+    Task::behavior();
+    User::behavior();
+}
