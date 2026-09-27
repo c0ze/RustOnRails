@@ -67,7 +67,7 @@ pub struct Relation<M: 'static> {
     includes: Vec<&'static dyn Preload<M>>,
     /// The records once `load` ran: Rails' `loaded?` relation, whose
     /// `size`, `any?`, `first` and `pluck` then use them.
-    loaded: RefCell<Option<Vec<Handle<M>>>>,
+    loaded: RefCell<Option<(u64, Vec<Handle<M>>)>>,
     marker: PhantomData<fn() -> M>,
 }
 
@@ -230,21 +230,21 @@ impl<M: Model> Relation<M> {
     /// The records, loaded once: a relation kept in a local answers from
     /// them afterwards, as Rails' does.
     pub fn load(&self, ctx: &mut Ctx) -> Result<Vec<Handle<M>>> {
-        if let Some(records) = self.cached() {
+        if let Some(records) = self.cached(ctx) {
             return Ok(records);
         }
         let handles: Vec<Handle<M>> = self.fetch(ctx)?.into_iter().map(|record| ctx.adopt(record)).collect();
         for association in &self.includes {
             association.preload(ctx, &handles)?;
         }
-        *self.loaded.borrow_mut() = Some(handles.clone());
+        *self.loaded.borrow_mut() = Some((ctx.id, handles.clone()));
         Ok(handles)
     }
 
     /// `first`: orders by id unless the relation has an order already.
     /// Loaded, it's the first record loaded; `limit(0)` has none.
     pub fn first(&self, ctx: &mut Ctx) -> Result<Option<Handle<M>>> {
-        if let Some(records) = self.cached() {
+        if let Some(records) = self.cached(ctx) {
             return Ok(records.first().copied());
         }
         if self.limit == Some(0) {
@@ -279,7 +279,7 @@ impl<M: Model> Relation<M> {
     pub fn contains(&self, ctx: &mut Ctx, record: impl Into<Option<Handle<M>>>) -> Result<bool> {
         let Some(id) = record.into().and_then(|record| ctx[record].id()) else { return Ok(false) };
         // Loaded, Rails compares the records by id.
-        if let Some(records) = self.cached() {
+        if let Some(records) = self.cached(ctx) {
             return Ok(records.iter().any(|loaded| ctx[*loaded].id() == Some(id)));
         }
         // Like Rails, a relation with a limit or offset is loaded and

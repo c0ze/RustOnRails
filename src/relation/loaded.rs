@@ -6,13 +6,15 @@ use super::Relation;
 use crate::{Ctx, FromValue, Handle, Model, Result};
 
 impl<M: Model> Relation<M> {
-    pub(crate) fn cached(&self) -> Option<Vec<Handle<M>>> {
-        self.loaded.borrow().clone()
+    /// The records `load` read, if it read them into `ctx`: in another
+    /// `Ctx` their handles would be other records.
+    pub(crate) fn cached(&self, ctx: &Ctx) -> Option<Vec<Handle<M>>> {
+        self.loaded.borrow().as_ref().filter(|(id, _)| *id == ctx.id).map(|(_, records)| records.clone())
     }
 
     /// `size`: the loaded records' number, or a COUNT query.
     pub fn size(&self, ctx: &mut Ctx) -> Result<i64> {
-        match self.cached() {
+        match self.cached(ctx) {
             Some(records) => Ok(records.len() as i64),
             None => self.count(ctx),
         }
@@ -20,7 +22,7 @@ impl<M: Model> Relation<M> {
 
     /// `any?` (and `!empty?`): whether a record was loaded, or exists.
     pub fn is_any(&self, ctx: &mut Ctx) -> Result<bool> {
-        match self.cached() {
+        match self.cached(ctx) {
             Some(records) => Ok(!records.is_empty()),
             None => self.exists(ctx),
         }
@@ -28,7 +30,7 @@ impl<M: Model> Relation<M> {
 
     /// `pluck` of a loaded relation reads its records.
     pub(crate) fn pluck_loaded<T: FromValue>(&self, ctx: &Ctx, column: &str) -> Option<Result<Vec<Option<T>>>> {
-        let records = self.cached()?;
+        let records = self.cached(ctx)?;
         Some(records.iter().map(|record| T::from_value(ctx[*record].get(column))).collect())
     }
 }

@@ -56,7 +56,7 @@ impl<M: Model> Relation<M> {
     /// batch a query of its own. (The records stay in the request's `Ctx`
     /// until it ends, as handles into it may.)
     pub fn batches(&self, size: i64) -> Batches<M> {
-        Batches { remaining: self.limit, relation: self.clone(), size, last: None, done: false, loaded: self.cached() }
+        Batches { remaining: self.limit, relation: self.clone(), size, last: None, done: false, loaded: self.loaded.borrow().clone() }
     }
 }
 
@@ -71,24 +71,46 @@ pub struct Batches<M: 'static> {
     last: Option<i64>,
     done: bool,
     /// A loaded relation's records, which Rails batches by id in memory.
-    loaded: Option<Vec<Handle<M>>>,
+    loaded: Option<(u64, Vec<Handle<M>>)>,
 }
 
 impl<M: Model> Batches<M> {
     /// The next batch, loaded into the `Ctx` with its `includes`, or None
     /// when there are no more.
     pub fn next(&mut self, ctx: &mut Ctx) -> Result<Option<Vec<Handle<M>>>> {
-        if let Some(records) = &mut self.loaded {
+        if self.done {
+            return Ok(None);
+        }
+        // Loaded into another Ctx, the handles are that one's. The same
+        // window (order, offset, limit) is loaded into this one, and the
+        // batches go on after the last record given, as they would have.
+        if self.loaded.as_ref().is_some_and(|(id, _)| *id != ctx.id) {
+            let mut records = self.relation.load(ctx)?;
+            if let Some(last) = self.last {
+                records.retain(|record| ctx[*record].id().is_some_and(|id| id > last));
+            }
+            records.sort_by_key(|record| std::cmp::Reverse(ctx[*record].id()));
+            self.last = Some(self.last.unwrap_or(0));
+            self.loaded = Some((ctx.id, records));
+        }
+        if let Some((_, records)) = &mut self.loaded {
             if self.last.is_none() {
                 records.sort_by_key(|record| std::cmp::Reverse(ctx[*record].id()));
                 self.last = Some(0);
             }
-            let size = usize::try_from(self.size).unwrap_or(usize::MAX);
+            // The limit caps the records given in total, whichever Ctx gave them.
+            let size = usize::try_from(self.remaining.map_or(self.size, |remaining| remaining.min(self.size))).unwrap_or(0);
             let batch: Vec<Handle<M>> = (0..size).map_while(|_| records.pop()).collect();
+            // The cursor moves as a query's would, so batches that go on in
+            // another Ctx start after what these gave.
+            if let Some(last) = batch.last().and_then(|record| ctx[*record].id()) {
+                self.last = Some(last);
+            }
+            if let Some(remaining) = &mut self.remaining {
+                *remaining -= batch.len() as i64;
+                self.done |= *remaining <= 0;
+            }
             return Ok(if batch.is_empty() { None } else { Some(batch) });
-        }
-        if self.done {
-            return Ok(None);
         }
         let limit = self.remaining.map_or(self.size, |remaining| remaining.min(self.size));
         let mut batch = self.relation.clone();

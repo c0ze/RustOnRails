@@ -240,7 +240,7 @@ impl ProductsController {
         let value = req.params.fetch("value", 1)?;
         Ok(Response::json(
             status::OK,
-            json!({ "value": value_json(value.clone()), "doubled": value_json(value.mul(&Value::from(2))?), "half": div_integers(value.to_i()?, 2)?, "text": format!("got {}", value.to_s()) }),
+            json!({ "value": value_json(value.clone()), "doubled": value_json(value.mul(&Value::Int(2))?), "half": div_integers(value.to_i()?, 2)?, "text": format!("got {}", value.to_s()) }),
         ))
     }
 

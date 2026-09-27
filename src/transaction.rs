@@ -114,25 +114,39 @@ impl Ctx {
         self.depth -= 1;
         self.joinable = opened.joinable;
         let frame = self.frames.pop().unwrap_or_default();
-        if commit {
-            // A committed savepoint's records roll back with the transaction around it.
-            if let Some(parent) = self.frames.last_mut() {
-                let keep: Vec<Remembered> = frame.into_iter().filter(|r| parent.iter().all(|p| p.key != r.key)).collect();
-                parent.extend(keep);
-            }
-        } else {
-            for remembered in frame.into_iter().rev() {
-                (remembered.restore)(self);
-            }
-        }
         let sql = match (self.depth == 0, commit) {
             (true, true) => "COMMIT".to_string(),
             (true, false) => "ROLLBACK".to_string(),
             (false, true) => format!("RELEASE SAVEPOINT {}", self.savepoint()),
             (false, false) => format!("ROLLBACK TO SAVEPOINT {}", self.savepoint()),
         };
-        let closed = self.batch_execute(&sql);
-        if failed { Ok(()) } else { closed }
+        if !commit {
+            self.restore_frame(frame);
+            let closed = self.batch_execute(&sql);
+            return if failed { Ok(()) } else { closed };
+        }
+        match self.batch_execute(&sql) {
+            Ok(()) => {
+                // A committed savepoint's records roll back with the transaction around it.
+                if let Some(parent) = self.frames.last_mut() {
+                    let keep: Vec<Remembered> = frame.into_iter().filter(|r| parent.iter().all(|p| p.key != r.key)).collect();
+                    parent.extend(keep);
+                }
+                Ok(())
+            }
+            // A COMMIT can fail on its own, on a deferred constraint: the
+            // database has rolled back, so the records go back too.
+            Err(error) => {
+                self.restore_frame(frame);
+                Err(error)
+            }
+        }
+    }
+
+    fn restore_frame(&mut self, frame: Vec<Remembered>) {
+        for remembered in frame.into_iter().rev() {
+            (remembered.restore)(self);
+        }
     }
 
     fn savepoint(&self) -> String {

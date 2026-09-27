@@ -22,6 +22,94 @@ impl Model for Person {
     }
 }
 
+model! {
+    pub struct Code in "rustonrails_deferred_codes" { id: i64, code: String, created_at: Time, updated_at: Time }
+}
+
+impl Model for Code {
+    fn behavior() -> &'static Behavior<Self> {
+        static BEHAVIOR: LazyLock<Behavior<Code>> = LazyLock::new(Behavior::<Code>::new);
+        &BEHAVIOR
+    }
+}
+
+/// A COMMIT can fail where no statement before it did: a deferred
+/// constraint is checked there. The database rolls back, so the records
+/// the block saved are new again rather than holding ids no row has.
+#[test]
+fn test_a_failed_commit_puts_the_records_back() {
+    support::prepare();
+    let mut ctx = Ctx::connect(&support::url()).unwrap();
+    let first = ctx.build(Code { code: Some("same".into()), ..Code::new_record() });
+    let second = ctx.build(Code { code: Some("same".into()), ..Code::new_record() });
+    let outcome: Result<Option<()>, Error> = ctx.transaction_block(|ctx| {
+        // A table of this connection's own, gone with the rollback.
+        ctx.execute(
+            "CREATE TEMP TABLE rustonrails_deferred_codes (id bigserial PRIMARY KEY, \
+             code text UNIQUE DEFERRABLE INITIALLY DEFERRED, created_at timestamp NOT NULL, updated_at timestamp NOT NULL)",
+            &[],
+        )?;
+        ctx.save_bang(first)?;
+        ctx.save_bang(second)?;
+        Ok(())
+    });
+    assert!(outcome.is_err(), "the COMMIT fails the deferred unique constraint");
+    for record in [first, second] {
+        assert!(ctx.is_new_record(record));
+        assert!(ctx[record].id.is_none());
+    }
+}
+
+/// Handles are slots in one `Ctx`: a relation loaded in one and asked in
+/// another queries again rather than reading that one's slots.
+#[test]
+fn test_a_loaded_relation_asked_in_another_ctx_queries_again() {
+    let mut a = support::ctx();
+    let alice = person(&mut a, "alice-elsewhere");
+    a.save_bang(alice).unwrap();
+    let relation = Person::all().where_eq("name", "alice-elsewhere");
+    assert_eq!(1, relation.load(&mut a).unwrap().len());
+    // Another connection, whose transaction doesn't see Alice.
+    let mut b = support::ctx();
+    let bob = person(&mut b, "bob-elsewhere");
+    b.save_bang(bob).unwrap();
+    assert_eq!(None, relation.first(&mut b).unwrap());
+    assert!(relation.pluck::<String>(&mut b, "name").unwrap().is_empty());
+    assert_eq!(0, relation.size(&mut b).unwrap());
+    let mut batches = relation.batches(10);
+    assert_eq!(None, batches.next(&mut b).unwrap());
+}
+
+/// Batches begun from a loaded relation's records and continued in
+/// another Ctx go on after the last record given, not from the start.
+#[test]
+fn test_batches_continue_after_what_they_gave() {
+    support::prepare();
+    let mut a = Ctx::connect(&support::url()).unwrap();
+    let names = ["batch-zero", "batch-one", "batch-two"];
+    let saved: Vec<Handle<Person>> = names.iter().map(|name| person(&mut a, name)).collect();
+    for p in &saved {
+        a.save_bang(*p).unwrap();
+    }
+    // Newest first, skipping the newest: the window is zero and one,
+    // which batches give by id.
+    let relation = Person::all()
+        .where_in("name", names.iter().map(|n| rustonrails::Value::from(n.to_string())).collect())
+        .order_desc("id")
+        .offset(1);
+    relation.load(&mut a).unwrap();
+    let mut batches = relation.batches(1);
+    let first = batches.next(&mut a).unwrap().unwrap();
+    assert_eq!(Some("batch-zero"), a[first[0]].name.as_deref());
+    let mut b = Ctx::connect(&support::url()).unwrap();
+    let second = batches.next(&mut b).unwrap().unwrap();
+    assert_eq!(Some("batch-one"), b[second[0]].name.as_deref());
+    assert_eq!(None, batches.next(&mut b).unwrap());
+    for p in saved {
+        a.destroy_bang(p).unwrap();
+    }
+}
+
 fn person(ctx: &mut Ctx, name: &str) -> Handle<Person> {
     let record = Person { name: Some(name.into()), email: Some(format!("{name}@example.com")), ..Person::new_record() };
     ctx.build(record)

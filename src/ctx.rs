@@ -1,5 +1,6 @@
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use postgres::error::{Severity, SqlState};
 use postgres::types::ToSql;
@@ -87,6 +88,9 @@ pub struct Ctx {
     /// their state before, to put back if it rolls back.
     pub(crate) frames: Vec<Vec<crate::transaction::Remembered>>,
     pub(crate) tables: HashMap<TypeId, Box<dyn Any + Send>>,
+    /// Unique to this `Ctx`: a handle means something only in the `Ctx`
+    /// that made it, so what caches handles notes which one that was.
+    pub(crate) id: u64,
 }
 
 impl Ctx {
@@ -100,7 +104,9 @@ impl Ctx {
 
     /// A fresh unit of work on a connection that keeps its prepared statements.
     pub fn resume(connection: Connection) -> Self {
-        Self { connection, depth: 0, joinable: false, frames: Vec::new(), tables: HashMap::new() }
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Self { connection, depth: 0, joinable: false, frames: Vec::new(), tables: HashMap::new(), id }
     }
 
     /// Opens a transaction that is never committed; dropping the `Ctx`
