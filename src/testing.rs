@@ -31,8 +31,9 @@ pub fn ctx(schema: &str) -> Ctx {
 
 fn load(schema: &str) {
     let url = database_url();
-    let (base, name) = url.rsplit_once('/').expect("database URL ends in /name");
-    let mut admin = crate::connect::connect(&format!("{base}/postgres")).expect("connect to postgres");
+    // The admin connection keeps the URL's host, user and TLS settings.
+    let name = crate::connect::database_name(&url).expect("parse the test database URL").expect("the URL names a database");
+    let mut admin = crate::connect::connect_to(&url, Some("postgres")).expect("connect to postgres");
     admin.batch_execute("SELECT pg_advisory_lock(7351)").unwrap();
     if admin.query("SELECT 1 FROM pg_database WHERE datname = $1", &[&name]).unwrap().is_empty() {
         admin.batch_execute(&format!("CREATE DATABASE \"{name}\"")).unwrap();

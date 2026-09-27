@@ -59,8 +59,17 @@ enum Roots {
 /// (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`)
 /// and an `sslrootcert`: a PEM file of CA certificates, or `system`.
 pub(crate) fn connect(url: &str) -> Result<Client> {
+    connect_to(url, None)
+}
+
+/// `connect`, to the database `dbname` rather than the URL's: the same
+/// host, user and TLS settings.
+pub(crate) fn connect_to(url: &str, dbname: Option<&str>) -> Result<Client> {
     let (url, mut tls) = take_tls(url)?;
     let mut config: postgres::Config = url.parse()?;
+    if let Some(dbname) = dbname {
+        config.dbname(dbname);
+    }
     adopt(&mut tls, config.get_ssl_mode());
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let (mode, roots) = settle(&tls, home.as_deref())?;
@@ -70,6 +79,14 @@ pub(crate) fn connect(url: &str) -> Result<Client> {
         _ => SslMode::Require,
     });
     Ok(config.connect(connector(mode, &roots)?)?)
+}
+
+/// The database `url` names, as the driver reads it: in a URL, the path
+/// before any query.
+pub(crate) fn database_name(url: &str) -> Result<Option<String>> {
+    let (url, _) = take_tls(url)?;
+    let config: postgres::Config = url.parse()?;
+    Ok(config.get_dbname().map(str::to_string))
 }
 
 /// An `sslmode` that got past `take_tls` is still in the URL the driver
@@ -313,6 +330,13 @@ mod tests {
         assert_eq!(("postgres://h/db".into(), Some(Mode::Prefer), None), take("postgres://h/db?sslmode=allow"));
         // Percent-decoding only: a `+` stays a plus.
         assert_eq!(Some("/certs/ca+2025.pem".into()), take("postgres://h/db?sslrootcert=/certs/ca+2025.pem").2);
+    }
+
+    #[test]
+    fn test_the_database_name_is_the_path_before_the_query() {
+        let url = "postgres://u@h/ror_test?sslmode=verify-full&sslrootcert=system";
+        assert_eq!(Some("ror_test".to_string()), database_name(url).unwrap());
+        assert_eq!(Some("db".to_string()), database_name("host=h dbname=db sslmode=require").unwrap());
     }
 
     #[test]

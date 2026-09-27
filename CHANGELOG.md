@@ -11,7 +11,7 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 - Records and queries, as Rails does them: an integer past a bigint fails the write instead of saving 0 and is unboundable in queries (`find` of it is a 404); a `where` value that casts to nil matches nothing; `where(x: [a, nil])` and one-element lists; enum writes take labels only and a blank string is nil; `"1_000"` casts to 1000; a new owner's `has_many` is empty; saving a destroyed record is false; `Ctx::same_record` for `==`.
 - Datetime strings without seconds or with a `UTC` suffix parse, and one in an unknown format is an error rather than a silent nil.
 - `as_json(include:)` leaves out a nil `belongs_to`; `full_messages` of a `:base` error is the message alone; a JSON body that isn't an object is `params[:_json]`.
-- Test setup refuses to wipe a database it didn't load.
+- Test setup refuses to wipe a database it didn't load, and reads the database name and TLS settings from the URL as the driver does, keeping them for its admin connection.
 
 ## 0.9.0
 

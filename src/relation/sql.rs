@@ -129,7 +129,7 @@ impl<M: Model> Relation<M> {
             // it, everything differs, and a range from it is empty or open.
             match (M::query_bound(column, value), op) {
                 (0, _) => {}
-                (_, "=") | (1, ">=") => {
+                (_, "=") | (1, ">=" | ">") => {
                     sql.push_str("1=0");
                     continue;
                 }
