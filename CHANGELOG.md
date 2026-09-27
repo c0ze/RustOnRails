@@ -5,20 +5,22 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 ## Unreleased
 
 - The server's limits, each configurable (`Limits`, or the environment): a connection cap, deadlines for a request's headers, its body and the response (the last two growing with the bytes that move, at `MIN_RATE`), and the body size. A client trickling bytes can no longer hold a thread forever, and a slow but steady one isn't cut off. Each connection holds one file descriptor.
-- Postgres over TLS, with every libpq `sslmode` and `sslrootcert`.
-- HTTP: control bytes in the target or a header, `Transfer-Encoding` on HTTP/1.0 and lowercase methods are refused; running out of threads no longer ends the accept loop; a panic outside a transaction keeps the worker's connection.
+- Postgres over TLS, with libpq's six `sslmode` names (`allow` behaves as `prefer`) and `sslrootcert`.
+- HTTP: control bytes in the target, and control bytes but tab in a header value, and `Transfer-Encoding` on HTTP/1.0 are refused; a lowercase method doesn't match its uppercase routes (`get /up` is a 404); running out of threads no longer ends the accept loop; a panic outside a transaction keeps the worker's connection.
 - Connections: one ended by a FATAL error is replaced after that request, not the next; statements a migration invalidated are prepared again.
 - Records and queries, as Rails does them: an integer past a bigint fails the write instead of saving 0 and is unboundable in queries (`find` of it is a 404); a `where` value that casts to nil matches nothing; `where(x: [a, nil])` and one-element lists; enum writes take labels only and a blank string is nil; `"1_000"` casts to 1000; a new owner's `has_many` is empty; saving a destroyed record is false; `Ctx::same_record` for `==`.
 - Datetime strings without seconds or with a `UTC` suffix parse, and one in an unknown format is an error rather than a silent nil.
 - `as_json(include:)` leaves out a nil `belongs_to`; `full_messages` of a `:base` error is the message alone; a JSON body that isn't an object is `params[:_json]`.
 - A COMMIT that fails (on a deferred constraint) puts back the records the transaction touched, as a rollback does; a loaded relation answers from its records only in the `Ctx` that loaded them, and queries again in another.
+- A session Integer Rails wrote from 2**63 to 2**64 - 1 is a TypeError instead of a Float. One the JSON parser keeps only as a Float (past 2**64 - 1, or below -2**63) still reads as a Float.
+- `tools/loadgen` asks for JSON unless it's given an `Accept` header of its own.
 - From the review of the 0.10 merge: the scheduler moves a due job to its queue in one Redis step, so a lost connection can't drop it; a failure's retry entry is decided once, so a write retried after a lost reply doesn't add a second; `READONLY` from a demoted primary reconnects; a session value keeps its class until the request ends, as in Rails; a panic or a missing database answers through the exceptions app and SSL middleware like any other error.
-- Test setup refuses to wipe a database it didn't load, and reads the database name and TLS settings from the URL as the driver does, keeping them for its admin connection.
+- Test setup resets a database's `public` schema only when it holds the tests' marker table or no tables at all (it doesn't check each table's origin), and reads the database name and TLS settings from the URL as the driver does, keeping them for its admin connection.
 
 ## 0.10.0
 
 - **Sessions:**
-  - Rails 8.1's cookie store: `CookieKey` derives the key as Rails does (PBKDF2-SHA256 of `secret_key_base`) and seals and opens AES-256-GCM cookies in Rails' `_rails` envelope, with the cookie's name as the purpose.
+  - Rails 8.1's cookie store: `CookieKey` derives the key as Rails does (PBKDF2-SHA256 of `secret_key_base`) and seals and opens AES-256-GCM cookies in Rails' `_rails` envelope, with `cookie.<name>` as the purpose.
   - `Session` loads and sends back the session under the same rules as Rails.
   - `Cookies` parses and sets plain cookies with Rack's escaping.
   - `Router::session_store` and `server::Config::secret_key_base` set it up.
@@ -54,7 +56,7 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 
 ## 0.8.0
 
-- `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. An Integer and a Float compare exactly.
+- `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. Limits: an Integer result past 64 bits is `Error::Overflow` where Ruby makes a Bignum, a String's `%` (format) is refused, and so is a Date minus a Date, which Ruby makes a Rational. An Integer and a Float compare exactly.
 - `div_integers`, `mod_integers` and `mod_floats` are Ruby's floor division and modulo for typed numbers.
 - `Response::json_value` is `render json:` of a Value: a String goes out as it is, as Rails sends it.
 - `Params::value` and `Params::fetch` return a `Result`. An array or a hash is an error rather than nil, since a Value holds only scalars.
@@ -66,7 +68,7 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 
 ## 0.7.0
 
-- Relations compute `count`, `sum`, `minimum`, `maximum`, `pluck` and `exists?` in the SQL Rails writes: aggregates drop the order and keep the limit and offset; a count with a limit counts a subquery; `limit(0)` needs no query. `numeric` values (the `SUM` of a bigint) read back as Integers.
+- Relations compute `count`, `sum`, `minimum`, `maximum`, `pluck` and `exists?` in the SQL Rails writes: aggregates drop the order and keep the limit and offset; a count with a limit counts a subquery; `limit(0)` needs no query for `count`, `exists?` and `first`; aggregates and an unloaded `pluck` still run one. `numeric` values (the `SUM` of a bigint) read back as Integers.
 - `Relation::batches` is `find_each`: by id, after the last id seen, with the relation's limit capping the total.
 - `Ctx::transaction_block` and `Request::transaction_block` run app code's `transaction do ... end`: the block's value, or `None` on `Error::Rollback`. A transaction inside an open one joins it, as in Active Record, so `save` inside a block no longer takes a savepoint of its own; the test's own transaction can't be joined, like Rails' fixture transaction.
 - `sum_integers` and `sum_floats` are `Array#sum`, raising `Error::NilCoerced` on a nil element.

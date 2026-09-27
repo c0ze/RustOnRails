@@ -4,9 +4,11 @@ Known defects and loose ends in the runtime, kept here until they're fixed. The 
 
 ## Known defects
 
-- **A rolled-back transaction restores only the record it saved.** `save` and `destroy` run in a transaction and restore their own record's id, saved state and destroyed flag when it rolls back, but records saved or destroyed inside it (a child in `after_create`, the children of `dependent: :destroy`) keep their new state in memory. Afterwards such a record can say it's persisted with an id whose row was rolled back, and a later `save` of it updates nothing and returns true. Rails' `rolledback!` restores every record the transaction touched. Fixed on the `feature/tooling` branch (each transaction remembers the records it touches); it lands on `main` with that merge.
+None known.
 
 ## Rails parity
+
+- **An Integer past 2**64 - 1 or below -2**63 in a Rails-written session** reads as a Float: `serde_json` keeps only an `f64` for a number outside `i64` and `u64`, so it can't be told from a Float. One too large for a finite `f64` fails the parse, and the whole session reads as empty. From 2**63 to 2**64 - 1 it's a TypeError, as the build expects. `serde_json`'s `arbitrary_precision` would keep the digits.
 
 - **Query bounds know only the bigint range.** `where(estimate: "3000000000")` on an `integer` (int4) column fails to bind, a 500; Rails reads the value as out of the column's range and writes `1=0`. `FromValue::bound` would need the column's limit.
 - **A huge numeric string for an enum column** (`where(status: "99999999999999999999")`) becomes `status IS NULL`; Rails writes `1=0`.
@@ -14,7 +16,8 @@ Known defects and loose ends in the runtime, kept here until they're fixed. The 
 - **An unknown enum label is refused when written, not when assigned.** Rails raises `ArgumentError` at assignment; here validations and before-callbacks run first. Their database changes roll back, but anything else they do doesn't.
 - **`true` assigned to a float attribute** is a cast error; Rails stores 1.0.
 - **`Model::insert`** is a plain INSERT of every column. Rails' `insert` is `insert_all` with `ON CONFLICT DO NOTHING`, writing only the given keys and the timestamps. Rutile doesn't compile calls to it.
-- **After Postgres restarts, each worker's first request fails** before the worker reconnects. Rails 7.1+ reconnects and retries an idempotent read, so there that request succeeds.
+- **After Postgres restarts, each worker's first request that touches the database fails**; the worker reconnects for its next request. A request that doesn't touch the database, like a health check, succeeds and leaves the dead connection in place. Rails 7.1+ reconnects and retries an idempotent read, so there that request succeeds.
+- **`sslmode=allow` behaves as `prefer`**: TLS first, plaintext if the server has none. libpq's `allow` tries plaintext first and TLS only if the server refuses it.
 
 ## Server
 

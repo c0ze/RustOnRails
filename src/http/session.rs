@@ -55,6 +55,11 @@ impl Session {
         match data.get(key) {
             None | Some(Json::Null) => Ok(Value::Nil),
             Some(Json::Bool(b)) => Ok(Value::Bool(*b)),
+            // Rails wrote an Integer a Value can't hold as one: refused, not
+            // read as a Float. (Past 2**64 JSON's parser keeps only a Float.)
+            Some(Json::Number(n)) if n.is_u64() && n.as_i64().is_none() => {
+                Err(Error::Type { message: format!("session[:{key}] holds an Integer past 64 bits") })
+            }
             Some(Json::Number(n)) => Ok(n.as_i64().map_or_else(|| Value::Float(n.as_f64().unwrap_or(f64::NAN)), Value::Int)),
             Some(Json::String(s)) => Ok(Value::Str(s.clone())),
             Some(_) => Err(Error::Type { message: format!("session[:{key}] holds a hash or an array") }),

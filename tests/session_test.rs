@@ -57,6 +57,19 @@ fn test_a_time_stays_a_time_until_the_cookie() {
     assert_eq!(Value::Nil, session.get("at").unwrap());
 }
 
+/// An Integer Rails wrote past what a Value holds is refused rather than
+/// read as a Float.
+#[test]
+fn test_an_integer_past_64_bits_is_refused() {
+    let key = CookieKey::derive(SECRET);
+    let plain = br#"{"session_id":"abc","big":18446744073709551615,"small":7}"#;
+    // As a Cookie header carries it: Base64's `+`, `/` and `=` escaped.
+    let cookie = key.encrypt("_store_session", plain).replace('+', "%2B").replace('/', "%2F").replace('=', "%3D");
+    let mut session = session(Some(&cookie));
+    assert_eq!(Value::Int(7), session.get("small").unwrap());
+    assert!(matches!(session.get("big"), Err(rustonrails::Error::Type { .. })));
+}
+
 #[test]
 fn test_what_sends_no_cookie() {
     // Nothing touched it, or it was only read with no cookie to read.

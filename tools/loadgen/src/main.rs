@@ -56,10 +56,13 @@ fn split_url(url: &str) -> (String, String) {
     }
 }
 
-/// The GET every connection sends, with the extra headers.
+/// The GET every connection sends, with the extra headers. It asks for
+/// JSON unless they name an Accept of their own (an HTML page).
 fn request(host: &str, path: &str, headers: &[String]) -> String {
     let extra: String = headers.iter().map(|h| format!("{h}\r\n")).collect();
-    format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n{extra}\r\n")
+    let own = headers.iter().any(|h| h.split(':').next().is_some_and(|name| name.trim().eq_ignore_ascii_case("accept")));
+    let accept = if own { "" } else { "Accept: application/json\r\n" };
+    format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n{accept}{extra}\r\n")
 }
 
 fn run(host: &str, request: &str, deadline: Instant) -> (Vec<Duration>, usize) {
@@ -174,8 +177,10 @@ mod tests {
 
     #[test]
     fn test_extra_headers_go_before_the_blank_line() {
-        let request = request("h:1", "/projects", &["X-Api-Token: abc".to_string()]);
-        assert_eq!("GET /projects HTTP/1.1\r\nHost: h:1\r\nAccept: application/json\r\nX-Api-Token: abc\r\n\r\n", request);
+        let api = request("h:1", "/projects", &["X-Api-Token: abc".to_string()]);
+        assert_eq!("GET /projects HTTP/1.1\r\nHost: h:1\r\nAccept: application/json\r\nX-Api-Token: abc\r\n\r\n", api);
+        let page = request("h:1", "/shop", &["accept: text/html".to_string()]);
+        assert_eq!("GET /shop HTTP/1.1\r\nHost: h:1\r\naccept: text/html\r\n\r\n", page);
     }
 
     #[test]
