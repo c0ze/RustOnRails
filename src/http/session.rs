@@ -5,6 +5,8 @@
 //! cookie holds one; one that loaded is sent back re-encrypted, and one
 //! that never did sends nothing.
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value as Json};
 
 use super::cookies::CookieOptions;
@@ -30,16 +32,22 @@ pub struct Session {
     /// The session cookie as the request sent it.
     cookie: Option<String>,
     data: Option<Map<String, Json>>,
+    /// What this request set, as it set it: Rails keeps a Time a Time
+    /// until the cookie's JSON is written.
+    written: HashMap<String, Value>,
 }
 
 impl Session {
     pub fn new(store: Option<SessionStore>, cookie: Option<String>) -> Self {
-        Self { store, cookie, data: None }
+        Self { store, cookie, data: None, written: HashMap::new() }
     }
 
     /// `session[:key]`: nil for a key it doesn't have. Rails keeps what
     /// JSON holds; a hash or an array here would need more than a Value.
     pub fn get(&mut self, key: &str) -> Result<Value> {
+        if let Some(value) = self.written.get(key) {
+            return Ok(value.clone());
+        }
         if self.data.is_none() && self.existing()?.is_none() {
             return Ok(Value::Nil);
         }
@@ -56,18 +64,21 @@ impl Session {
     /// `session[:key] = value`: stored as its JSON, as Rails' serializer
     /// writes it. nil leaves the key out of the cookie.
     pub fn set(&mut self, key: &str, value: impl Into<Value>) -> Result<()> {
-        let json = match value.into() {
-            Value::Time(t) => Json::String(format_time(t)),
-            Value::Date(d) => Json::String(format_date(d)),
-            other => value_json(other),
+        let value = value.into();
+        let json = match &value {
+            Value::Time(t) => Json::String(format_time(*t)),
+            Value::Date(d) => Json::String(format_date(*d)),
+            other => value_json(other.clone()),
         };
         self.load()?.insert(key.to_string(), json);
+        self.written.insert(key.to_string(), value);
         Ok(())
     }
 
     /// `session.delete(:key)`: what it held.
     pub fn delete(&mut self, key: &str) -> Result<Value> {
         let value = self.get(key)?;
+        self.written.remove(key);
         if self.data.is_some() {
             self.load()?.shift_remove(key);
         }
@@ -80,6 +91,7 @@ impl Session {
         let mut data = Map::new();
         data.insert("session_id".into(), Json::String(session_id()));
         self.data = Some(data);
+        self.written.clear();
         Ok(())
     }
 

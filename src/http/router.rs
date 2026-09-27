@@ -118,14 +118,14 @@ impl Router {
         req.session = Session::new(self.session.clone(), cookie);
         let mut response = self.route_request(req);
         if response.raised {
-            return self.secured(self.shown(req, response.status));
+            return self.failure(req.wants_json_errors(), response.status);
         }
         let mut cookies = req.cookies.headers(self.same_site);
         match req.session.header() {
             Ok(session) => cookies.extend(session),
             Err(error) => {
                 eprintln!("{} {} failed: {error}", req.method, req.path);
-                return self.secured(self.shown(req, 500));
+                return self.failure(req.wants_json_errors(), 500);
             }
         }
         response.cookies.extend(cookies);
@@ -155,8 +155,15 @@ impl Router {
     /// What Rails' exceptions app sends for `status`: JSON to a JSON
     /// request; to anything else the app's `public/<status>.html`, or an
     /// empty HTML page when it has none.
-    fn shown(&self, req: &Request, status: u16) -> Response {
-        if req.wants_json_errors() {
+    /// A failed request's response: Rails' exceptions app, inside its SSL
+    /// middleware, with no cookies. The server uses it for what fails
+    /// outside the app, a panic or no database.
+    pub(crate) fn failure(&self, wants_json: bool, status: u16) -> Response {
+        self.secured(self.shown(wants_json, status))
+    }
+
+    fn shown(&self, wants_json: bool, status: u16) -> Response {
+        if wants_json {
             return error_page(status);
         }
         let page = self.public_pages.iter().find(|(code, _)| *code == status).map_or("", |(_, html)| html);

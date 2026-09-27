@@ -354,3 +354,27 @@ fn test_only_redis_urls() {
     let error = jobs::configure(Some("rediss://example.com:6380")).unwrap_err();
     assert_eq!("REDIS_URL: rediss:// isn't supported, only redis://", error.to_string());
 }
+
+/// A primary that became a replica answers READONLY: the connection is
+/// given up so the next command reconnects, and finds the new primary.
+/// Other errors are Redis's answer, on a connection that's still good.
+#[test]
+fn test_a_replica_breaks_the_connection() {
+    use std::io::{Read, Write};
+    let answer = |reply: &'static [u8]| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 256];
+            let _ = stream.read(&mut buf);
+            stream.write_all(reply).unwrap();
+        });
+        let mut redis = Redis::connect(&format!("redis://{address}")).unwrap();
+        assert!(redis.command(&["LPUSH", "queue:x", "y"]).is_err());
+        server.join().unwrap();
+        redis.is_broken()
+    };
+    assert!(answer(b"-READONLY You can't write against a read only replica.\r\n"));
+    assert!(!answer(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"));
+}

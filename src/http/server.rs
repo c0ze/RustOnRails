@@ -255,7 +255,10 @@ fn work(queue: &Mutex<Receiver<Job>>, router: &Router, url: &str) {
             }
             Err(error) => {
                 eprintln!("database connection failed: {error}");
-                error_page(500)
+                router.failure(
+                    super::request::wants_json_errors_for(&incoming.target, &incoming.headers, incoming.content_type.as_deref(), &incoming.body),
+                    500,
+                )
             }
         };
         reply.send(response).ok();
@@ -269,8 +272,10 @@ fn handle(router: &Router, connection: Connection, incoming: &Incoming) -> (Resp
     let mut req = build_request(Ctx::resume(connection), incoming);
     match catch_unwind(AssertUnwindSafe(|| router.call(&mut req))) {
         Ok(response) => (response, Some(req.ctx.into_connection())),
-        Err(_) if req.ctx.depth == 0 => (error_page(500), Some(req.ctx.into_connection())),
-        Err(_) => (error_page(500), None),
+        Err(_) => {
+            let response = router.failure(req.wants_json_errors(), 500);
+            (response, (req.ctx.depth == 0).then(|| req.ctx.into_connection()))
+        }
     }
 }
 

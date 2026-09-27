@@ -110,6 +110,12 @@ impl Redis {
         let unreadable = |redis: &mut Self| redis.lost(format!("a Redis reply I can't read: {line}"));
         match (kind, number) {
             ("+", _) => Ok(Reply::Status(rest.to_string())),
+            // A primary that became a replica, or one going down, answers
+            // with an error: the next command needs a new connection, which
+            // finds the new primary, as Sidekiq's client reconnects.
+            ("-", _) if ["READONLY", "MASTERDOWN", "UNBLOCKED"].iter().any(|code| rest.starts_with(code)) => {
+                Err(self.lost(format!("Redis: {rest}")))
+            }
             ("-", _) => Err(failed(format!("Redis: {rest}"))),
             (":", Some(n)) => Ok(Reply::Int(n)),
             ("$" | "*", Some(-1)) => Ok(Reply::Nil),

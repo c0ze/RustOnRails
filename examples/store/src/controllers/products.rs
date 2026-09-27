@@ -267,8 +267,15 @@ impl ProductsController {
         crate::jobs::restock_job::RESTOCK_JOB.perform_later(
             &crate::jobs::APP,
             vec![
-                rustonrails::jobs::record_argument(&req.ctx, &crate::jobs::APP, product)?,
-                Json::from(amount_2),
+                rustonrails::jobs::record_argument::<Product>(
+                    &req.ctx,
+                    &crate::jobs::APP,
+                    product,
+                )?,
+                {
+                    let argument: i64 = amount_2;
+                    Json::from(argument)
+                },
             ],
         )?;
         Ok(Response::json(202, json!({ "queued": true })))

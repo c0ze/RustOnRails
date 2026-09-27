@@ -12,6 +12,7 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 - Datetime strings without seconds or with a `UTC` suffix parse, and one in an unknown format is an error rather than a silent nil.
 - `as_json(include:)` leaves out a nil `belongs_to`; `full_messages` of a `:base` error is the message alone; a JSON body that isn't an object is `params[:_json]`.
 - A COMMIT that fails (on a deferred constraint) puts back the records the transaction touched, as a rollback does; a loaded relation answers from its records only in the `Ctx` that loaded them, and queries again in another.
+- From the review of the 0.10 merge: the scheduler moves a due job to its queue in one Redis step, so a lost connection can't drop it; a failure's retry entry is decided once, so a write retried after a lost reply doesn't add a second; `READONLY` from a demoted primary reconnects; a session value keeps its class until the request ends, as in Rails; a panic or a missing database answers through the exceptions app and SSL middleware like any other error.
 - Test setup refuses to wipe a database it didn't load, and reads the database name and TLS settings from the URL as the driver does, keeping them for its admin connection.
 
 ## 0.10.0

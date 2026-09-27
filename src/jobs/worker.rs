@@ -82,13 +82,16 @@ pub fn work(config: WorkerConfig, perform: Perform) -> Result<()> {
             eprintln!("job failed: {error}");
             // The job is off its queue: until the retry set has it, it's
             // in this process alone.
-            let mut kept = with_redis(|redis| retry(redis, &payload, error));
+            // Decided once: a write retried after a lost reply sends the same
+            // bytes, which Redis's sets keep once, not a second retry entry.
+            let failure = failure(&payload, error);
+            let mut kept = with_redis(|redis| record(redis, &failure));
             while let Err(lost) = kept {
                 if config.once {
                     return Err(lost);
                 }
                 pause(&lost);
-                kept = with_redis(|redis| retry(redis, &payload, error));
+                kept = with_redis(|redis| record(redis, &failure));
             }
         }
         if config.once {
@@ -147,11 +150,13 @@ fn run(ctx: &mut Ctx, payload: &[u8], perform: Perform) -> Result<()> {
 /// drops the job, a number is its own limit, and `dead: false` keeps it
 /// off the dead set. A payload that isn't a job goes straight to the dead
 /// set, as in Sidekiq.
-fn retry(redis: &mut Redis, payload: &[u8], error: &Error) -> Result<()> {
+fn failure(payload: &[u8], error: &Error) -> Failure {
     let now = chrono::Utc::now();
-    let Ok(Json::Object(mut job)) = serde_json::from_slice::<Json>(payload) else { return kill(redis, payload, now.timestamp()) };
+    let Ok(Json::Object(mut job)) = serde_json::from_slice::<Json>(payload) else {
+        return Failure::Dead { payload: payload.to_vec(), now: now.timestamp() };
+    };
     let limit = match job.get("retry") {
-        Some(Json::Bool(false)) => return Ok(()),
+        Some(Json::Bool(false)) => return Failure::Dropped,
         Some(Json::Number(n)) => n.as_i64().unwrap_or(RETRIES),
         _ => RETRIES,
     };
@@ -166,13 +171,30 @@ fn retry(redis: &mut Redis, payload: &[u8], error: &Error) -> Result<()> {
     if count < limit {
         let jitter = super::hex(1).chars().next().and_then(|c| c.to_digit(16)).unwrap_or(0) as i64 % 10;
         let at = now.timestamp() + count.pow(4) + 15 + jitter * (count + 1);
-        redis.command_bytes(&[b"ZADD", b"retry", at.to_string().as_bytes(), Json::Object(job).to_string().as_bytes()])?;
-        return Ok(());
+        return Failure::Retry { payload: Json::Object(job).to_string().into_bytes(), at };
     }
     if job.get("dead") == Some(&Json::Bool(false)) {
-        return Ok(());
+        return Failure::Dropped;
     }
-    kill(redis, Json::Object(job).to_string().as_bytes(), now.timestamp())
+    Failure::Dead { payload: Json::Object(job).to_string().into_bytes(), now: now.timestamp() }
+}
+
+/// Where a failed job goes, decided once per failure.
+enum Failure {
+    Dropped,
+    Retry { payload: Vec<u8>, at: i64 },
+    Dead { payload: Vec<u8>, now: i64 },
+}
+
+fn record(redis: &mut Redis, failure: &Failure) -> Result<()> {
+    match failure {
+        Failure::Dropped => Ok(()),
+        Failure::Retry { payload, at } => {
+            redis.command_bytes(&[b"ZADD", b"retry", at.to_string().as_bytes(), payload])?;
+            Ok(())
+        }
+        Failure::Dead { payload, now } => kill(redis, payload, *now),
+    }
 }
 
 /// Sidekiq's dead set: the job, then anything past six months or 10,000.
@@ -183,6 +205,9 @@ fn kill(redis: &mut Redis, payload: &[u8], now: i64) -> Result<()> {
     Ok(())
 }
 
+/// ZREM, then LPUSH only if this call removed it.
+const MOVE_DUE: &[u8] = b"if redis.call('zrem', KEYS[1], ARGV[1]) == 1 then redis.call('lpush', KEYS[2], ARGV[1]) return 1 end return 0";
+
 /// Moves the jobs in `set` (retries, or jobs scheduled for later) that are
 /// due back onto their queues, as Sidekiq's scheduler does. Members go
 /// back byte for byte.
@@ -191,13 +216,12 @@ fn enqueue_due(redis: &mut Redis, set: &str) -> Result<()> {
     loop {
         let Reply::Array(due) = redis.command(&["ZRANGEBYSCORE", set, "-inf", &now, "LIMIT", "0", "1"])? else { return Ok(()) };
         let Some(Reply::Bulk(payload)) = due.into_iter().next() else { return Ok(()) };
-        // Whoever removes it enqueues it, so two schedulers can't both.
-        if redis.command_bytes(&[b"ZREM", set.as_bytes(), &payload])? != Reply::Int(1) {
-            continue;
-        }
         let queue = serde_json::from_slice::<Json>(&payload).ok().and_then(|job| job["queue"].as_str().map(str::to_string));
         let queue = format!("queue:{}", queue.unwrap_or_else(|| "default".into()));
-        redis.command_bytes(&[b"LPUSH", queue.as_bytes(), &payload])?;
+        // Removed and pushed in one step, as Sidekiq's scheduler does it:
+        // whoever removes it enqueues it, and a connection lost between
+        // the two can't leave it in neither.
+        redis.command_bytes(&[b"EVAL", MOVE_DUE, b"2", set.as_bytes(), queue.as_bytes(), &payload])?;
     }
 }
 

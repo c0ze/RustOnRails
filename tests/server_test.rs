@@ -80,7 +80,8 @@ fn test_server_parses_json_bodies_and_query_strings() {
 fn test_server_survives_a_panicking_handler() {
     // One worker, so the requests after the panic land on the worker that panicked.
     let running = start(1);
-    assert_eq!((500, json!({"status": 500, "error": "Internal Server Error"})), get(running.address, "/boom"));
+    let boom = "GET /boom HTTP/1.1\r\nHost: test\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
+    assert_eq!((500, json!({"status": 500, "error": "Internal Server Error"})), send(running.address, boom));
     for _ in 0..3 {
         assert_eq!(200, get(running.address, "/users/count").0);
     }
@@ -412,5 +413,57 @@ fn test_headers_reach_the_request_case_insensitively() {
     let request = "GET /token HTTP/1.1\r\nHost: test\r\nX-Api-Token: abc\r\nConnection: close\r\n\r\n";
     assert_eq!((200, json!("abc")), send(running.address, request));
     assert_eq!((200, json!(null)), get(running.address, "/token"));
+    running.stop();
+}
+
+/// A panic, or no database, fails outside the app, but Rails' exceptions
+/// app and SSL middleware still answer: the app's 500 page to a browser,
+/// JSON to a JSON request, HSTS on both.
+#[test]
+fn test_failures_outside_the_app_go_through_its_middleware() {
+    support::prepare();
+    let router = Router::new()
+        .get("/boom", Box::new(|_: &mut Request| -> Response { panic!("boom") }))
+        .force_ssl()
+        .public_page(500, "<h1>Failed</h1>");
+    let raw = |running: &server::Running, request: &str| {
+        let mut stream = TcpStream::connect(running.address).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).unwrap();
+        raw
+    };
+    let config = |database_url: String| Config {
+        address: "127.0.0.1:0".into(),
+        database_url,
+        workers: 1,
+        limits: Limits::default(),
+        secret_key_base: None,
+        redis_url: None,
+    };
+    let running = server::start(router, config(support::url())).unwrap();
+    let page = raw(&running, "GET /boom HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n");
+    assert!(page.starts_with("HTTP/1.1 500"), "{page}");
+    assert!(page.contains("Strict-Transport-Security: max-age=63072000; includeSubDomains"), "{page}");
+    assert!(page.ends_with("<h1>Failed</h1>"), "{page}");
+    let json = raw(&running, "GET /boom HTTP/1.1\r\nHost: test\r\nAccept: application/json\r\nConnection: close\r\n\r\n");
+    assert!(json.ends_with(r#"{"status":500,"error":"Internal Server Error"}"#), "{json}");
+    running.stop();
+
+    // No database: the same page, without ever reaching a handler.
+    let router = Router::new().get("/boom", Box::new(|_: &mut Request| Response::head(200))).force_ssl().public_page(500, "<h1>Failed</h1>");
+    let running = server::start(router, config("postgres://nobody@127.0.0.1:1/none".into())).unwrap();
+    let page = raw(&running, "GET /boom HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n");
+    assert!(page.starts_with("HTTP/1.1 500") && page.ends_with("<h1>Failed</h1>"), "{page}");
+    assert!(page.contains("Strict-Transport-Security"), "{page}");
+    // A format the body sends counts, as Rails merges body params in.
+    let form = "POST /boom HTTP/1.1\r\nHost: test\r\nContent-Type: application/x-www-form-urlencoded\r\n\
+                Content-Length: 11\r\nConnection: close\r\n\r\nformat=json";
+    assert!(raw(&running, form).ends_with(r#"{"status":500,"error":"Internal Server Error"}"#));
+    // The query's format, even one that isn't a string, replaces the body's.
+    let both = "POST /boom?format%5B%5D=html HTTP/1.1\r\nHost: test\r\nAccept: text/html\r\n\
+                Content-Type: application/json\r\nContent-Length: 17\r\nConnection: close\r\n\r\n{\"format\":\"json\"}";
+    assert!(raw(&running, both).ends_with("<h1>Failed</h1>"));
     running.stop();
 }

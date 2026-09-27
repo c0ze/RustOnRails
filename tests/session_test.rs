@@ -37,6 +37,26 @@ fn test_a_written_session_reads_back() {
     assert_eq!(Value::Int(18276415), again.get("product_id").unwrap());
 }
 
+/// Rails keeps what a request put in the session as it is until the
+/// request ends; only the cookie's JSON makes a Time a String.
+#[test]
+fn test_a_time_stays_a_time_until_the_cookie() {
+    let mut session = session(Some(RAILS_COOKIE));
+    let at = rustonrails::now();
+    session.set("at", at).unwrap();
+    assert_eq!(Value::Time(at), session.get("at").unwrap());
+    let header = session.header().unwrap().unwrap();
+    let value = header.trim_start_matches("_store_session=").split(';').next().unwrap();
+    assert!(matches!(self::session(Some(value)).get("at").unwrap(), Value::Str(_)));
+    // Deleted or reset, it's gone from both.
+    session.set("at", at).unwrap();
+    assert_eq!(Value::Time(at), session.delete("at").unwrap());
+    assert_eq!(Value::Nil, session.get("at").unwrap());
+    session.set("at", at).unwrap();
+    session.reset().unwrap();
+    assert_eq!(Value::Nil, session.get("at").unwrap());
+}
+
 #[test]
 fn test_what_sends_no_cookie() {
     // Nothing touched it, or it was only read with no cookie to read.
