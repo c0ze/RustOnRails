@@ -15,7 +15,7 @@ fn echo(name: &'static str) -> Handler {
 }
 
 fn has_email(req: &Request) -> bool {
-    !req.params.value("email").is_blank()
+    !req.params.value("email").unwrap_or(rustonrails::Value::Nil).is_blank()
 }
 
 fn router() -> Router {
@@ -73,7 +73,7 @@ fn test_json_bodies_become_params() {
 }
 
 fn id_is_numeric(req: &Request) -> bool {
-    req.params.value("id").to_ruby_string().chars().all(|c| c.is_ascii_digit())
+    req.params.value("id").unwrap_or(rustonrails::Value::Nil).to_ruby_string().chars().all(|c| c.is_ascii_digit())
 }
 
 // Rails sets the route's path parameters before its constraint runs.

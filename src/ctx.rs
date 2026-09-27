@@ -79,6 +79,13 @@ impl Connection {
 pub struct Ctx {
     pub(crate) connection: Connection,
     pub(crate) depth: u32,
+    /// Whether the innermost open transaction takes nested ones into it.
+    /// The test's own transaction doesn't, like Rails' fixture transaction,
+    /// so a transaction a test runs gets a savepoint as it would in Rails.
+    pub(crate) joinable: bool,
+    /// For each transaction open (not joined), the records it touched and
+    /// their state before, to put back if it rolls back.
+    pub(crate) frames: Vec<Vec<crate::transaction::Remembered>>,
     pub(crate) tables: HashMap<TypeId, Box<dyn Any + Send>>,
 }
 
@@ -93,7 +100,7 @@ impl Ctx {
 
     /// A fresh unit of work on a connection that keeps its prepared statements.
     pub fn resume(connection: Connection) -> Self {
-        Self { connection, depth: 0, tables: HashMap::new() }
+        Self { connection, depth: 0, joinable: false, frames: Vec::new(), tables: HashMap::new() }
     }
 
     /// Opens a transaction that is never committed; dropping the `Ctx`
@@ -135,37 +142,7 @@ impl Ctx {
         self.connection.check(rows)
     }
 
-    /// `transaction do ... end`, keeping the block's outcome the way `save`
-    /// does: `Ok(false)` or an error rolls back. Nested calls use savepoints.
-    pub fn transaction(&mut self, block: impl FnOnce(&mut Ctx) -> Result<bool>) -> Result<bool> {
-        let name = format!("rustonrails_{}", self.depth);
-        let (begin, commit, rollback) = if self.depth == 0 {
-            ("BEGIN".to_string(), "COMMIT".to_string(), "ROLLBACK".to_string())
-        } else {
-            (format!("SAVEPOINT {name}"), format!("RELEASE SAVEPOINT {name}"), format!("ROLLBACK TO SAVEPOINT {name}"))
-        };
-        self.batch_execute(&begin)?;
-        self.depth += 1;
-        let outcome = block(self);
-        self.depth -= 1;
-        match outcome {
-            Ok(true) => {
-                self.batch_execute(&commit)?;
-                Ok(true)
-            }
-            Ok(false) => {
-                self.batch_execute(&rollback)?;
-                Ok(false)
-            }
-            Err(error) => {
-                // The original error says more than a failed rollback would.
-                self.batch_execute(&rollback).ok();
-                Err(error)
-            }
-        }
-    }
-
-    fn batch_execute(&mut self, sql: &str) -> Result<()> {
+    pub(crate) fn batch_execute(&mut self, sql: &str) -> Result<()> {
         let done = self.connection.client.batch_execute(sql);
         self.connection.check(done)
     }

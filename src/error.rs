@@ -26,10 +26,21 @@ pub enum Error {
     RecordNotDestroyed { model: &'static str },
     /// A before callback stopped the chain, like `throw :abort`.
     Abort,
+    /// `raise ActiveRecord::Rollback`: rolls back the transaction block
+    /// around it, which then gives nil.
+    Rollback,
     /// A method called on nil, Ruby's `NoMethodError` for `nil`.
     Nil { what: &'static str },
+    /// nil where a number is added, Ruby's TypeError.
+    NilCoerced { into: &'static str },
     /// A method the value's class doesn't have, Ruby's `NoMethodError`.
     NoMethod { what: &'static str, value: Value },
+    /// Ruby's ZeroDivisionError: an Integer divided by 0, or any `%` by 0.
+    ZeroDivision,
+    /// Ruby's TypeError: `1 + "a"`, `"a" + 1`.
+    Type { message: String },
+    /// Ruby's ArgumentError: `1 < "a"`, `"a" * -1`.
+    Argument { message: String },
     /// An Integer Ruby would promote to a Bignum.
     Overflow { value: String },
     /// A value an attribute's type can't hold.
@@ -57,8 +68,12 @@ impl fmt::Display for Error {
             Error::RecordNotSaved { .. } => write!(f, "Failed to save the record"),
             Error::RecordNotDestroyed { model } => write!(f, "Failed to destroy {model}"),
             Error::Abort => write!(f, "callback chain aborted"),
+            Error::Rollback => write!(f, "ActiveRecord::Rollback"),
             Error::Nil { what } => write!(f, "undefined method '{what}' for nil"),
+            Error::NilCoerced { into } => write!(f, "nil can't be coerced into {into}"),
             Error::NoMethod { what, value } => write!(f, "undefined method '{what}' for {value:?}"),
+            Error::Type { message } | Error::Argument { message } => write!(f, "{message}"),
+            Error::ZeroDivision => write!(f, "divided by 0"),
             Error::Overflow { value } => write!(f, "{value} doesn't fit in a 64-bit integer"),
             Error::Cast { expected, value } => write!(f, "can't cast {value:?} to {expected}"),
             Error::UnknownAttribute { model, name } => write!(f, "unknown attribute '{name}' for {model}."),

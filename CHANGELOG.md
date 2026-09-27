@@ -13,6 +13,36 @@ RustOnRails and Rutile share version numbers; each minor version is one mileston
 - `as_json(include:)` leaves out a nil `belongs_to`; `full_messages` of a `:base` error is the message alone; a JSON body that isn't an object is `params[:_json]`.
 - Test setup refuses to wipe a database it didn't load.
 
+## 0.9.0
+
+- No runtime changes: `rutile package` vendors this crate beside the app's, with its `Cargo.lock`, so a release image builds offline. The examples are regenerated.
+
+## 0.8.0
+
+- `Value` does Ruby's operators on a value whose class is known only at run time: `add`, `sub`, `mul`, `div`, `modulo`, `equals`, `compare`, `is_truthy`, `to_s`, `to_f`. Each gives Ruby's result or Ruby's error: `Error::Type` (TypeError), `Error::Argument` (ArgumentError), `Error::ZeroDivision`, `Error::Nil` and `Error::NoMethod`. An Integer and a Float compare exactly.
+- `div_integers`, `mod_integers` and `mod_floats` are Ruby's floor division and modulo for typed numbers.
+- `Response::json_value` is `render json:` of a Value: a String goes out as it is, as Rails sends it.
+- `Params::value` and `Params::fetch` return a `Result`. An array or a hash is an error rather than nil, since a Value holds only scalars.
+- Behaviour changes:
+  - A Time compares with a Date as the Date's midnight, as Active Support does.
+  - Date and Time arithmetic past chrono's range raises "time out of range" instead of panicking.
+  - `"ab" * NaN` raises.
+  - `-0.0` prints with its sign.
+
+## 0.7.0
+
+- Relations compute `count`, `sum`, `minimum`, `maximum`, `pluck` and `exists?` in the SQL Rails writes: aggregates drop the order and keep the limit and offset; a count with a limit counts a subquery; `limit(0)` needs no query. `numeric` values (the `SUM` of a bigint) read back as Integers.
+- `Relation::batches` is `find_each`: by id, after the last id seen, with the relation's limit capping the total.
+- `Ctx::transaction_block` and `Request::transaction_block` run app code's `transaction do ... end`: the block's value, or `None` on `Error::Rollback`. A transaction inside an open one joins it, as in Active Record, so `save` inside a block no longer takes a savepoint of its own; the test's own transaction can't be joined, like Rails' fixture transaction.
+- `sum_integers` and `sum_floats` are `Array#sum`, raising `Error::NilCoerced` on a nil element.
+- A relation keeps the records `load` read: `size`, `is_any`, `first`, `contains`, `pluck` and `batches` answer from them, as a loaded `ActiveRecord::Relation` does; builders start unloaded.
+- A rollback puts back the records the transaction touched (id, saved state, destroyed), and `Error::Rollback` from a callback makes `save` false and `save!` return.
+- `HasMany::of` an unsaved owner is `Relation::none`; `limit(0).first` is `None`; enum aggregates are integers.
+
+## 0.6.0
+
+- `examples/store`, Rutile's third example, generated with methods that take typed parameters. No runtime changes were needed: typed parameters are plain Rust arguments.
+
 ## 0.5.0
 
 The first tagged version: the runtime the 0.5.0 compiler generates code for.

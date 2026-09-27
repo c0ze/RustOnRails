@@ -104,7 +104,7 @@ impl<M: Model, T: Model> HasMany<M, T> {
     /// every orphan (and destroy them, with `dependent: :destroy`).
     pub fn of(&self, ctx: &Ctx, owner: Handle<M>) -> Relation<T> {
         if ctx.is_new_record(owner) {
-            return T::all().where_in(self.foreign_key, Vec::new());
+            return T::all().none();
         }
         T::all().where_eq(self.foreign_key, ctx[owner].get("id"))
     }

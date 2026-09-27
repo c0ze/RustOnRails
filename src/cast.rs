@@ -37,7 +37,7 @@ static LEADING_FLOAT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?").expect("regex"));
 
 /// Ruby's `String#to_f`: the leading number, 0.0 when there is none.
-fn to_f(s: &str) -> f64 {
+pub(crate) fn to_f(s: &str) -> f64 {
     LEADING_FLOAT.find(s).and_then(|m| m.as_str().trim().parse().ok()).unwrap_or(0.0)
 }
 
@@ -253,7 +253,8 @@ pub(crate) fn ruby_float(f: f64) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "Infinity" } else { "-Infinity" }.into();
     }
-    let sign = if f < 0.0 { "-" } else { "" };
+    // -0.0 keeps its sign, as in Ruby.
+    let sign = if f.is_sign_negative() { "-" } else { "" };
     let scientific = format!("{:e}", f.abs());
     let (mantissa, exponent) = scientific.split_once('e').expect("{:e} has an exponent");
     let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
