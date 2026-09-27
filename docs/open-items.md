@@ -25,11 +25,10 @@ Known defects and loose ends in the runtime, kept here until they're fixed. The 
 
 ## On hold
 
-- **Arrays and hashes read as a scalar param.** `Params::value` is nil for an array or a hash, so `?status[]=todo&status[]=doing` read as `params[:status]` is nil, and code that filters on it when present returns everything, where Rails filters with `IN`. Waiting on real array support in the params and `Value` layer, in both repositories.
+- **Arrays and hashes read as a scalar param.** `Params::value` is an `Error::Type` for an array or a hash, since a `Value` holds scalars only, so `?status[]=todo&status[]=doing` read as `params[:status]` is a 500 where Rails filters with `IN`. Waiting on arrays in `Value`, in both repositories.
 
 ## Housekeeping
 
-- `find_each` and `in_batches` are described in the design but not built.
+- `find_each` (`Relation::batches`) keeps every batch's records in the request's record table; the design's arena per batch, dropped after it, isn't built, so a walk over many rows grows memory until the request ends.
 - Two clippy warnings: `from_database` in `src/enums.rs` takes `self`, and a collapsible `if` in `src/http/router.rs`.
 - `Ctx::into_client` has no callers.
-- `main` and the `feature/tooling` branch (0.6 to 0.9) changed the same code in parallel, including `src/association.rs` (both make a new owner's `has_many` empty, differently), `src/persistence.rs`, `src/ctx.rs`, `src/relation.rs`, the generated examples and the changelog. Merging the two needs the conflicts resolved by hand.

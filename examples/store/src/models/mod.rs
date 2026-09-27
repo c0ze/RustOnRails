@@ -7,3 +7,12 @@ mod product;
 pub use line_item::LineItem;
 pub use order::{Order, OrderScopes};
 pub use product::{Product, ProductScopes};
+
+/// Builds every model's validations and callbacks, so that one Rust can't
+/// build (a regexp it can't parse) stops the server at boot.
+pub fn behaviors() {
+    use rustonrails::Model;
+    LineItem::behavior();
+    Order::behavior();
+    Product::behavior();
+}

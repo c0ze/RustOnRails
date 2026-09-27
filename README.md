@@ -31,7 +31,7 @@ A program that starts the server itself passes `rustonrails::Limits` in `server:
 cargo test --workspace
 ```
 
-The workspace holds the crate, the two generated example apps (`examples/blog` and `examples/tracker`; run one with `DATABASE_URL=... cargo run --release -p blog`) and `tools/loadgen`, the load generator behind the benchmark. TLS builds on the system's OpenSSL, through `native-tls`.
+The workspace holds the crate, the three generated example apps (`examples/blog`, `examples/tracker` and `examples/store`; run one with `DATABASE_URL=... cargo run --release -p blog`) and `tools/loadgen`, the load generator behind the benchmark. TLS builds on the system's OpenSSL, through `native-tls`.
 
 Tests need Postgres. With [Rutile](https://github.com/c0ze/Rutile) cloned next to this repository, `bundle exec rake pg:start` there starts the cluster the tests use; or point `RUSTONRAILS_TEST_DATABASE_URL` at your own. The tests load the blog's schema from `examples/blog/db/schema.sql`; regenerate it with `pg_dump --schema-only --no-owner --no-privileges --no-comments -T schema_migrations -T ar_internal_metadata` of the blog's test database, dropping the `\` and `--` lines. Only a database the tests loaded, or an empty one, is ever reset.
 

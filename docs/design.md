@@ -47,7 +47,7 @@ There is no identity map: like Rails, each load makes a new record, so two `Post
 - `Rails.cache`: values copied in and out of moka or Redis
 - class variables and mutable globals: rejected by `rutile check` (they aren't safe under multi-threaded Puma either)
 
-**Batches** (not built yet). `find_each` and `in_batches` will open a nested arena per batch and drop it after, so a job walking ten million rows keeps flat memory. The trade-off is that memory used inside one huge request is only returned when it ends; batching is the answer there too.
+**Batches** (`find_each` is built as `Relation::batches`; the arena per batch isn't yet). `find_each` and `in_batches` will open a nested arena per batch and drop it after, so a job walking ten million rows keeps flat memory. The trade-off is that memory used inside one huge request is only returned when it ends; batching is the answer there too.
 
 ## Records
 
