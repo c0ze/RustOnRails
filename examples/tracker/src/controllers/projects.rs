@@ -19,17 +19,17 @@ pub struct ProjectsController {
 }
 
 impl Controller for ProjectsController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "project",
-            &[
+            Some(&[
                 "archived_at",
                 "created_at",
                 "id",
                 "name",
                 "owner_id",
                 "updated_at",
-            ],
+            ]),
         ))
     }
 

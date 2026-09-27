@@ -16,10 +16,10 @@ pub struct PostsController {
 }
 
 impl Controller for PostsController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "post",
-            &[
+            Some(&[
                 "body",
                 "comments_count",
                 "created_at",
@@ -29,7 +29,7 @@ impl Controller for PostsController {
                 "title",
                 "updated_at",
                 "user_id",
-            ],
+            ]),
         ))
     }
 

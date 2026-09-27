@@ -305,7 +305,7 @@ impl<M: Model> Relation<M> {
     pub fn find(&self, ctx: &mut Ctx, id: impl Into<Value>) -> Result<Handle<M>> {
         let id = id.into();
         let found = self.clone().where_eq("id", id.clone()).limit(1).load(ctx)?.into_iter().next();
-        let conditions = Some(format!("'id'={}", id.to_ruby_string()));
+        let conditions = Some(format!("'id'={}", id.inspect()));
         found.ok_or(Error::RecordNotFound { model: M::NAME, conditions })
     }
 

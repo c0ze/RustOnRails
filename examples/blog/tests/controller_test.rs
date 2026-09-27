@@ -13,8 +13,8 @@ struct PostsController {
 }
 
 impl Controller for PostsController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
-        Some(("post", Post::COLUMNS))
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
+        Some(("post", Some(Post::COLUMNS)))
     }
 
     fn before(&mut self, req: &mut Request, action: &str) -> Result<Option<Response>> {

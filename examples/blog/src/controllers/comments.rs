@@ -16,17 +16,17 @@ pub struct CommentsController {
 }
 
 impl Controller for CommentsController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "comment",
-            &[
+            Some(&[
                 "body",
                 "created_at",
                 "id",
                 "post_id",
                 "updated_at",
                 "user_id",
-            ],
+            ]),
         ))
     }
 

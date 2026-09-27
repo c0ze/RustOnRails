@@ -122,3 +122,15 @@ fn test_release_builds_check_overflow() {
     let manifest = include_str!("../Cargo.toml");
     assert!(manifest.contains("[profile.release]\noverflow-checks = true"), "{manifest}");
 }
+
+/// `inspect`, as Ruby's error messages quote a value.
+#[test]
+fn test_inspect() {
+    assert_eq!("nil", Value::Nil.inspect());
+    assert_eq!("5", Value::Int(5).inspect());
+    let text = "\u{1}\u{7f}\u{85}\u{7}\u{8}\u{c}\u{b}\0 #{x} #a \u{e9} \u{200b} \u{1F600} \"q\" \\ \n\t\r\u{1b}";
+    assert_eq!(
+        "\"\\u0001\\u007F\\u0085\\a\\b\\f\\v\\u0000 \\#{x} #a \u{e9} \u{200b} \u{1F600} \\\"q\\\" \\\\ \\n\\t\\r\\e\"",
+        Value::from(text).inspect()
+    );
+}

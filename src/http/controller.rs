@@ -4,8 +4,9 @@ use crate::{Error, Result};
 /// What a Rails controller class declares. Each request gets a fresh
 /// `Default` instance, whose fields are the controller's instance variables.
 pub trait Controller: Default + 'static {
-    /// `wrap_parameters`: the wrapper key and the attribute names it takes.
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    /// `wrap_parameters`: the wrapper key and the attribute names it takes,
+    /// or None for every body key (a controller with no model).
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         None
     }
 
@@ -58,6 +59,7 @@ pub fn error_response(error: &Error) -> Response {
         Error::RecordNotFound { .. } => 404,
         Error::RecordInvalid { .. } | Error::RecordNotSaved { .. } => 422,
         Error::ParameterMissing { .. } => 400,
+        Error::Raised { class: "ActionController::UnknownFormat", .. } => 406,
         _ => 500,
     };
     error_page(status)

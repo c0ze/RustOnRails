@@ -39,7 +39,7 @@ fn test_missing_or_empty_is_parameter_missing() {
 fn test_wrap_copies_body_keys_only() {
     let body = map(json!({"title": "Hi", "junk": 1}));
     let mut params = Params::new(body.clone(), map(json!({"page": "2"})));
-    params.wrap(&body, "post", &["title", "page"]);
+    params.wrap(&body, "post", Some(&["title", "page"]));
     assert_eq!(json!({"title": "Hi"}), *params.get("post").unwrap());
 }
 
@@ -47,7 +47,7 @@ fn test_wrap_copies_body_keys_only() {
 fn test_wrap_leaves_existing_key_alone() {
     let body = map(json!({"post": {"title": "Nested"}, "title": "Top"}));
     let mut params = Params::new(body.clone(), Default::default());
-    params.wrap(&body, "post", &["title"]);
+    params.wrap(&body, "post", Some(&["title"]));
     assert_eq!(json!({"title": "Nested"}), *params.get("post").unwrap());
 }
 

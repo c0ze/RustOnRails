@@ -18,10 +18,10 @@ pub struct TasksController {
 }
 
 impl Controller for TasksController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
         Some((
             "task",
-            &[
+            Some(&[
                 "assignee_id",
                 "completed_at",
                 "created_at",
@@ -34,7 +34,7 @@ impl Controller for TasksController {
                 "status",
                 "title",
                 "updated_at",
-            ],
+            ]),
         ))
     }
 

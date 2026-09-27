@@ -48,14 +48,18 @@ fn start_with(workers: usize, limits: Limits) -> server::Running {
         .post("/echo", Box::new(|req: &mut Request| {
             Response::json(201, json!({"name": req.params.get("name"), "page": req.params.get("page")}))
         }));
-    server::start(router, Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers, limits }).unwrap()
+    server::start(
+        router,
+        Config { address: "127.0.0.1:0".into(), database_url: support::url(), workers, limits, secret_key_base: None, redis_url: None },
+    )
+    .unwrap()
 }
 
 #[test]
 fn test_server_answers_routes_and_404s() {
     let running = start(2);
     assert_eq!((200, json!({"ok": true})), get(running.address, "/up"));
-    assert_eq!((404, json!({"status": 404, "error": "Not Found"})), get(running.address, "/nowhere"));
+    assert_eq!((404, json!({"status": 404, "error": "Not Found"})), get(running.address, "/nowhere.json"));
     assert_eq!(200, get(running.address, "/users/count").0);
     running.stop();
 }
@@ -366,7 +370,7 @@ fn test_head_runs_the_get_route_without_a_body() {
 
 fn post_echo(address: SocketAddr, content_type: &str, body: &str) -> (u16, Json) {
     let request = format!(
-        "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST /echo HTTP/1.1\r\nHost: test\r\nAccept: application/json\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     send(address, &request)

@@ -43,7 +43,7 @@ fn test_path_params_and_format() {
 #[test]
 fn test_method_must_match() {
     assert_eq!(json!("posts#update"), call("PATCH", "/posts/1", "")["route"]);
-    assert_eq!(json!({"status": 404, "error": "Not Found"}), call("POST", "/posts/1", ""));
+    assert_eq!(json!({"status": 404, "error": "Not Found"}), call("POST", "/posts/1.json", ""));
 }
 
 #[test]
@@ -56,9 +56,45 @@ fn test_failed_constraint_falls_through() {
     assert_eq!(json!({"route": "users#show", "params": {"id": "lookup"}}), call("GET", "/users/lookup", ""));
 }
 
+/// Rails' exceptions app answers in the request's format: JSON for JSON,
+/// else the app's public page, or an empty HTML one.
 #[test]
 fn test_no_route_is_a_404_page() {
-    assert_eq!(json!({"status": 404, "error": "Not Found"}), call("GET", "/nowhere", ""));
+    assert_eq!(json!({"status": 404, "error": "Not Found"}), call("GET", "/nowhere.json", ""));
+    let accept = vec![("Accept".to_string(), "application/json".to_string())];
+    let mut req = Request::new(support::ctx(), "GET", "/nowhere").with_headers(accept);
+    assert_eq!(json!({"status": 404, "error": "Not Found"}), router().call(&mut req).body_json());
+    let mut req = Request::new(support::ctx(), "GET", "/nowhere");
+    let page = router().call(&mut req);
+    assert_eq!((404, Some("text/html; charset=utf-8"), 0), (page.status, page.content_type, page.body.len()));
+    let mut req = Request::new(support::ctx(), "GET", "/nowhere");
+    let page = router().public_page(404, "<h1>Gone</h1>").call(&mut req);
+    assert_eq!(b"<h1>Gone</h1>".to_vec(), page.body);
+}
+
+/// Rails' default headers go on what controllers answer; a render whose
+/// format came from Accept varies by it; force_ssl adds HSTS and marks
+/// cookies secure.
+#[test]
+fn test_response_headers() {
+    let router = || router().default_headers(&[("X-Frame-Options", "SAMEORIGIN")]);
+    let header = |response: &rustonrails::Response, name: &str| {
+        response.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
+    };
+    let mut req = Request::new(support::ctx(), "GET", "/");
+    let page = router().call(&mut req);
+    assert_eq!(Some("SAMEORIGIN".to_string()), header(&page, "x-frame-options"));
+    assert_eq!(None, header(&page, "vary"));
+    let accept = vec![("Accept".to_string(), "application/json".to_string())];
+    let mut req = Request::new(support::ctx(), "GET", "/").with_headers(accept);
+    assert_eq!(Some("Accept".to_string()), header(&router().call(&mut req), "vary"));
+    let browser = vec![("Accept".to_string(), "text/html,application/xhtml+xml,*/*;q=0.8".to_string())];
+    let mut req = Request::new(support::ctx(), "GET", "/").with_headers(browser);
+    assert_eq!(None, header(&router().call(&mut req), "vary"));
+    let mut req = Request::new(support::ctx(), "GET", "/nowhere");
+    let missing = router().force_ssl().call(&mut req);
+    assert_eq!(None, header(&missing, "x-frame-options"), "an error page isn't a controller's");
+    assert_eq!(Some("max-age=63072000; includeSubDomains".to_string()), header(&missing, "strict-transport-security"));
 }
 
 #[test]

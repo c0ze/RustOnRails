@@ -14,8 +14,11 @@ use super::application;
 pub struct UsersController;
 
 impl Controller for UsersController {
-    fn wrap_parameters() -> Option<(&'static str, &'static [&'static str])> {
-        Some(("user", &["created_at", "email", "id", "name", "updated_at"]))
+    fn wrap_parameters() -> Option<(&'static str, Option<&'static [&'static str]>)> {
+        Some((
+            "user",
+            Some(&["created_at", "email", "id", "name", "updated_at"]),
+        ))
     }
 
     fn rescue(&mut self, req: &mut Request, error: Error) -> Result<Response> {
