@@ -143,10 +143,16 @@ fn test_a_rescue_handler_renders_the_invalid_records_errors() {
 #[test]
 fn test_unrescued_errors_use_rails_statuses() {
     let (ctx, _) = setup();
-    let mut missing = Request::new(ctx, "POST", "/posts").with_query("x=1");
+    let json = || vec![("Accept".to_string(), "application/json".to_string())];
+    let mut missing = Request::new(ctx, "POST", "/posts").with_query("x=1").with_headers(json());
     assert_eq!((400, json!({"status": 400, "error": "Bad Request"})), send(&mut missing));
-    let mut broken = Request::new(missing.ctx, "GET", "/explode");
+    let mut broken = Request::new(missing.ctx, "GET", "/explode").with_headers(json());
     assert_eq!((500, json!({"status": 500, "error": "Internal Server Error"})), send(&mut broken));
+    // Without Accept, Rails' exceptions app answers HTML: the app's
+    // public/500.html, which an API app doesn't have, so an empty page.
+    let mut plain = Request::new(broken.ctx, "GET", "/explode");
+    let response = router().call(&mut plain);
+    assert_eq!((500, Some("text/html; charset=utf-8"), 0), (response.status, response.content_type, response.body.len()));
 }
 
 #[test]

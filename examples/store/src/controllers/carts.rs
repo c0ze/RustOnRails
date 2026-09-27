@@ -53,7 +53,7 @@ impl CartsController {
         req.session.set("product_id", Value::from(id))?;
         req.session.set(
             "quantity",
-            Value::from(quantity + req.params.fetch("quantity", 1)?.to_i()?),
+            Value::Int(quantity + req.params.fetch("quantity", 1)?.to_i()?),
         )?;
         if req.params.value("shopper")?.is_present() {
             req.session.set("shopper", req.params.value("shopper")?)?;
