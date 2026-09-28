@@ -40,3 +40,7 @@ The workspace holds the crate, the three generated example apps (`examples/blog`
 Tests need Postgres, and the job tests also need Redis. With [Rutile](https://github.com/c0ze/Rutile) cloned next to this repository, `bundle exec rake pg:start` there starts the cluster the tests use and `bundle exec rake redis:start` the Redis; or point `RUSTONRAILS_TEST_DATABASE_URL` and `RUSTONRAILS_TEST_REDIS_URL` (default `redis://127.0.0.1:54379/15`) at your own. The tests load the blog's schema from `examples/blog/db/schema.sql`; regenerate it with `pg_dump --schema-only --no-owner --no-privileges --no-comments -T schema_migrations -T ar_internal_metadata` of the blog's test database, dropping the `\` and `--` lines. The tests drop and recreate the `public` schema only when it holds the marker table they write (`rustonrails_schema`) or no tables at all; they look at tables only, so a schema with just views, functions or sequences is dropped too.
 
 `tests/tls_test.rs` checks, against a Postgres that has TLS, no `sslmode` (libpq's default, `prefer`), `disable`, `require`, `verify-ca` and `verify-full`, `sslrootcert` as a file and as `system`, and a `key=value` connection string; it doesn't check `allow`. It's ignored by default; see the file for how to point it at one.
+
+## License
+
+MIT; see [LICENSE](LICENSE).

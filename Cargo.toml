@@ -4,6 +4,7 @@ version = "0.10.0"
 edition = "2024"
 description = "The Rails API in Rust: the runtime Rutile compiles Rails apps against"
 repository = "https://github.com/c0ze/RustOnRails"
+license = "MIT"
 readme = "README.md"
 
 [dependencies]
